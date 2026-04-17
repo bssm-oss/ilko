@@ -29,6 +29,7 @@ public slots:
     void setWallpaper(const QString &profileId);
     void setWallpaperByMac(const QString &mac);
     void setDefaultWallpaper();
+    void reapplyCurrentProfile();
     void onLowBattery(bool low);
     void onConnectionChanged(bool connected);
 

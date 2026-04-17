@@ -26,6 +26,7 @@ signals:
 
 private slots:
     void onNMPropertiesChanged(const QString &interface, const QVariantMap &changed, const QStringList &invalidated);
+    void onNMStateChanged(uint state);
     void checkNetwork();
 
 private:

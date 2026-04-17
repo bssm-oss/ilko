@@ -105,7 +105,7 @@ void ProfileData::ensureDefaultExists() {
     auto profiles = loadAll();
     for (const auto& p : profiles) if (p.isDefault) return;
     ProfileData d;
-    d.id = QUuid::createUuid().toString();
+    d.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     d.name = "기본 (일코)";
     d.isDefault = true;
     profiles.prepend(d);
@@ -260,6 +260,7 @@ void MainWindow::onVideoDoubleClicked(QListWidgetItem *item)
                 }
                 ProfileData::saveAll(profiles);
                 updateVideoGrid();
+                emit profileSaved();
             }
             return;
         }
@@ -269,6 +270,7 @@ void MainWindow::onVideoDoubleClicked(QListWidgetItem *item)
 void MainWindow::showProfilesDialog() {
     ProfilesDialog(this).exec();
     updateVideoGrid();  // sync after add/edit/delete
+    emit profileSaved();
 }
 void MainWindow::showSettingsDialog() { SettingsDialog(this).exec(); }
 
@@ -337,7 +339,7 @@ void ProfilesDialog::refreshList()
 void ProfilesDialog::addProfile()
 {
     ProfileData d;
-    d.id = QUuid::createUuid().toString();
+    d.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     d.isDefault = false;
 
     QProcess p;
@@ -496,6 +498,10 @@ void ProfileEditDialog::startConversion(const QString &sourcePath)
     QString wallpapersDir = QDir::homePath() + "/.ilko/wallpapers";
     QDir().mkpath(wallpapersDir);
     QString outputPath = wallpapersDir + "/" + m_profile.id + ".mp4";
+    // Write to a temp file first; rename atomically on success so the old
+    // file stays intact if conversion is interrupted or cancelled.
+    // Keep the .mp4 extension so ffmpeg infers the correct container format.
+    QString tmpPath = wallpapersDir + "/." + m_profile.id + "_tmp.mp4";
 
     // If a previous converter is running, kill it
     if (m_converter) {
@@ -523,17 +529,16 @@ void ProfileEditDialog::startConversion(const QString &sourcePath)
         "-preset", "faster",
         "-crf", "28",
         "-r", QString::number(m_fpsSpinBox->value()),
-        "-c:a", "aac",
-        "-b:a", "128k",
+        "-an",          // no audio — video wallpaper never plays audio
         "-threads", "0",
         "-y",
-        outputPath
+        tmpPath         // write to temp file
     };
 
     connect(m_progressDialog, &QProgressDialog::canceled, m_converter, &QProcess::kill);
 
     connect(m_converter, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [this, outputPath, sourcePath](int exitCode, QProcess::ExitStatus) {
+            this, [this, outputPath, tmpPath, sourcePath](int exitCode, QProcess::ExitStatus status) {
         m_progressDialog->close();
         m_progressDialog->deleteLater();
         m_progressDialog = nullptr;
@@ -541,28 +546,35 @@ void ProfileEditDialog::startConversion(const QString &sourcePath)
         m_converter->deleteLater();
         m_converter = nullptr;
 
-        if (exitCode == 0 && QFile::exists(outputPath)) {
+        if (exitCode == 0 && status == QProcess::NormalExit && QFile::exists(tmpPath)) {
+            // Atomic replace: old file stays valid until new one is complete
+            QFile::remove(outputPath);
+            QFile::rename(tmpPath, outputPath);
+
             m_profile.wallpaperPath = outputPath;
             m_wallpaperEdit->setText(outputPath);
 
             // Regenerate thumbnail cache for updated video
             QString thumbDir = QDir::homePath() + "/.ilko/thumbnails";
             QString thumbPath = thumbDir + "/" + m_profile.id + ".jpg";
-            QFile::remove(thumbPath);  // remove stale thumb so it gets regenerated
+            QFile::remove(thumbPath);
 
             QPixmap thumb = wallpaperThumbnail(outputPath, m_profile.id, QSize(320, 160));
             if (!thumb.isNull())
                 m_previewLabel->setPixmap(thumb);
             else
                 m_previewLabel->setText("변환 완료 ✓");
-        } else if (exitCode != 0) {
-            QFile::remove(outputPath);
-            QMessageBox::warning(this, "변환 실패",
-                "H.265 변환에 실패했습니다.\n원본 파일을 사용합니다.");
-            m_profile.wallpaperPath = sourcePath;
-            m_wallpaperEdit->setText(sourcePath);
+        } else {
+            // Failed or cancelled — discard the incomplete temp file
+            QFile::remove(tmpPath);
+            if (status == QProcess::NormalExit) {
+                QMessageBox::warning(this, "변환 실패",
+                    "H.265 변환에 실패했습니다.\n원본 파일을 사용합니다.");
+                m_profile.wallpaperPath = sourcePath;
+                m_wallpaperEdit->setText(sourcePath);
+            }
+            // If cancelled (CrashExit from kill), leave wallpaperPath as-is
         }
-        // If cancelled (exitCode == -2 from kill), leave wallpaperPath as-is
     });
 
     m_converter->start("ffmpeg", args);

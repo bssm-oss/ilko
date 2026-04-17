@@ -5,6 +5,7 @@
 
 #include "ui/MainWindow.h"
 #include "core/Application.h"
+#include "core/SwitchController.h"
 
 int main(int argc, char *argv[])
 {
@@ -27,6 +28,9 @@ int main(int argc, char *argv[])
     daemon.initialize();
 
     MainWindow window;
+    // Re-apply wallpaper whenever the UI saves a profile edit
+    QObject::connect(&window, &MainWindow::profileSaved,
+                     daemon.switchController(), &SwitchController::reapplyCurrentProfile);
     window.show();
 
     return app.exec();

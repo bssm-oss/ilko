@@ -41,6 +41,8 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(QWidget *p = nullptr);
     ~MainWindow();
+signals:
+    void profileSaved();
 private slots:
     void onTrayIconActivated(QSystemTrayIcon::ActivationReason);
     void onQuit();

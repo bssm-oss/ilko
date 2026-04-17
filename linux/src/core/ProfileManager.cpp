@@ -25,7 +25,7 @@ void ProfileManager::load()
 
     if (!QFile::exists(m_configPath)) {
         Profile defaultProfile;
-        defaultProfile.id = QUuid::createUuid().toString();
+        defaultProfile.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         defaultProfile.name = QStringLiteral("기본 (일코)");
         defaultProfile.gatewayMac.clear();
         defaultProfile.wallpaperPath.clear();

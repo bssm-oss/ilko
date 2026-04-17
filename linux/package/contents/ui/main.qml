@@ -14,8 +14,20 @@ WallpaperItem {
         return f.startsWith("file://") ? f : encodeURI("file://" + f)
     }
 
-    property bool playerPaused: root.configuration.playerPaused  || false
-    property double playerRate:  root.configuration.playerRate    || 1.0
+    property bool   playerPaused:    root.configuration.playerPaused    || false
+    property double playerRate:      root.configuration.playerRate      || 1.0
+    property string wallpaperVersion: root.configuration.wallpaperVersion || ""
+
+    onWallpaperVersionChanged: {
+        // Version bumped means the file was replaced in-place (same path, new content).
+        // Force MediaPlayer to drop its cache and re-open the file.
+        if (isVideo && mediaPlayer.source !== "") {
+            var src = mediaPlayer.source
+            mediaPlayer.source = ""
+            mediaPlayer.source = src
+            if (!root.playerPaused) mediaPlayer.play()
+        }
+    }
 
     property bool isVideo: {
         var f = wallpaperSource
@@ -73,7 +85,11 @@ WallpaperItem {
                 mediaPlayer.play()
             }
         }
-        onErrorOccurred: function(e, msg) { console.log("ILKO MediaPlayer error:", msg) }
+        onErrorOccurred: function(e, msg) {
+            console.log("ILKO MediaPlayer error:", msg)
+            // Stop immediately — don't spam errors by looping a broken file
+            mediaPlayer.stop()
+        }
     }
 
     Image {

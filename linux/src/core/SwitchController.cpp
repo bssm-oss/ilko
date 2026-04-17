@@ -1,6 +1,7 @@
 #include "SwitchController.h"
 
 #include <QDebug>
+#include <QDateTime>
 #include <QDBusConnection>
 #include <QDBusInterface>
 
@@ -135,6 +136,19 @@ void SwitchController::setWallpaper(const QString &profileId)
     emit error(QStringLiteral("Profile not found: %1").arg(profileId));
 }
 
+void SwitchController::reapplyCurrentProfile()
+{
+    // Re-reads profiles from disk and re-applies whatever is current.
+    // Call this after the UI saves a profile edit.
+    if (!m_currentProfileId.isEmpty()) {
+        setWallpaper(m_currentProfileId);
+    } else if (!m_networkWatcher->isConnected()) {
+        setDefaultWallpaper();
+    } else {
+        setWallpaperByMac(m_networkWatcher->currentGatewayMac());
+    }
+}
+
 void SwitchController::setDefaultWallpaper()
 {
     if (!m_profileManager) return;
@@ -155,9 +169,12 @@ void SwitchController::applyWallpaper(const QString &wallpaperPath)
 
     ProfileManager::setCurrentWallpaper(wallpaperPath, m_currentProfileId);
 
-    // Push to Plasma config — plugin reads root.configuration.wallpaperFile,
-    // no QML_XHR_ALLOW_FILE_READ=1 env var needed
+    // Push to Plasma config — plugin reads root.configuration.wallpaperFile.
     plasmaWriteConfig(QStringLiteral("wallpaperFile"), wallpaperPath);
+    // Also bump a version counter so the QML detects a reload even when the
+    // file path itself hasn't changed (e.g. video replaced in-place).
+    plasmaWriteConfig(QStringLiteral("wallpaperVersion"),
+                      QString::number(QDateTime::currentMSecsSinceEpoch()));
 
     if (m_dbusService) {
         m_dbusService->emitWallpaperChanged(wallpaperPath, m_currentProfileId);

@@ -17,7 +17,7 @@ NetworkWatcher::NetworkWatcher(QObject *parent)
     , m_running(false)
 {
     connect(m_timer, &QTimer::timeout, this, &NetworkWatcher::checkNetwork);
-    
+
     QDBusConnection dbus = QDBusConnection::systemBus();
     if (dbus.isConnected()) {
         m_nmIface = new QDBusInterface(
@@ -27,8 +27,9 @@ NetworkWatcher::NetworkWatcher(QObject *parent)
             dbus,
             this
         );
-        
+
         if (m_nmIface->isValid()) {
+            // PropertiesChanged: fires early, during ACTIVATING — useful for clearing stale state
             dbus.connect(
                 "org.freedesktop.NetworkManager",
                 "/org/freedesktop/NetworkManager",
@@ -36,6 +37,17 @@ NetworkWatcher::NetworkWatcher(QObject *parent)
                 "PropertiesChanged",
                 this,
                 SLOT(onNMPropertiesChanged(QString,QVariantMap,QStringList))
+            );
+
+            // StateChanged fires when NM reaches CONNECTED_LOCAL (50) / CONNECTED_GLOBAL (70)
+            // — at this point DHCP is done, route is set, ARP should resolve quickly
+            dbus.connect(
+                "org.freedesktop.NetworkManager",
+                "/org/freedesktop/NetworkManager",
+                "org.freedesktop.NetworkManager",
+                "StateChanged",
+                this,
+                SLOT(onNMStateChanged(uint))
             );
         }
     }
@@ -96,10 +108,16 @@ QString NetworkWatcher::getGatewayMac()
 
     // Step 2: look up the MAC for that specific IP in the neighbour table
     // "ip neigh show <ip>" → "10.0.0.1 dev wlan0 lladdr 00:11:22:33:44:55 REACHABLE"
-    const QString neighOut = runCommand("ip", {"neigh", "show", gatewayIp});
-    if (neighOut.isEmpty()) return {};
+    QString neighOut = runCommand("ip", {"neigh", "show", gatewayIp});
 
+    // ARP entry may be absent right after connect — send one ICMP probe to
+    // populate the neigh cache, then re-query immediately.
     QString mac;
+    if (!parseArpOutput(neighOut, mac)) {
+        runCommand("ping", {"-c", "1", "-W", "1", "-q", gatewayIp});
+        neighOut = runCommand("ip", {"neigh", "show", gatewayIp});
+    }
+
     if (parseArpOutput(neighOut, mac)) {
         return mac.toLower();
     }
@@ -117,6 +135,19 @@ bool NetworkWatcher::parseArpOutput(const QString &output, QString &mac)
     }
 
     return false;
+}
+
+void NetworkWatcher::onNMStateChanged(uint state)
+{
+    // NM_STATE_CONNECTED_LOCAL = 50, NM_STATE_CONNECTED_GLOBAL = 70
+    // Fire retries shortly after NM reports the link is up — DHCP and ARP
+    // may not be fully settled yet, so stagger three attempts.
+    if (state >= 50) {
+        m_emptyMacStreak = 0;
+        QTimer::singleShot(500,  this, &NetworkWatcher::checkNetwork);
+        QTimer::singleShot(2000, this, &NetworkWatcher::checkNetwork);
+        QTimer::singleShot(5000, this, &NetworkWatcher::checkNetwork);
+    }
 }
 
 void NetworkWatcher::checkNetwork()
