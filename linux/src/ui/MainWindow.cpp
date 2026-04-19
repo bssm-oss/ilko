@@ -656,6 +656,17 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     storageInfo->setWordWrap(true);
     layout->addWidget(storageInfo);
 
+    layout->addSpacing(12);
+
+    // ── 자동 시작 섹션 ──────────────────────────────────────
+    layout->addWidget(new QLabel("<b>시작 프로그램</b>", this));
+
+    m_autostartCheck = new QCheckBox("로그인 시 자동으로 시작", this);
+    m_autostartCheck->setChecked(isAutostartEnabled());
+    layout->addWidget(m_autostartCheck);
+
+    layout->addSpacing(12);
+
     layout->addStretch();
 
     auto clearBtn = new QPushButton("변환된 월페이퍼 삭제", this);
@@ -666,8 +677,32 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     layout->addWidget(closeBtn, 0, Qt::AlignRight);
 
     connect(m_powerSavingCheck, &QCheckBox::toggled, this, &SettingsDialog::onPowerSavingToggled);
+    connect(m_autostartCheck, &QCheckBox::toggled, this, &SettingsDialog::onAutostartToggled);
     connect(clearBtn, &QPushButton::clicked, this, &SettingsDialog::clearCache);
     connect(closeBtn, &QPushButton::clicked, this, &QDialog::accept);
+}
+
+// ── Autostart helpers ────────────────────────────────────────────────────
+
+static QString autostartFile()
+{
+    return QDir::homePath() + "/.config/autostart/ilko.desktop";
+}
+
+bool SettingsDialog::isAutostartEnabled()
+{
+    return QFile::exists(autostartFile());
+}
+
+void SettingsDialog::onAutostartToggled(bool enabled)
+{
+    if (enabled) {
+        QDir().mkpath(QDir::homePath() + "/.config/autostart");
+        QFile::copy(QStringLiteral("/usr/share/applications/ilko.desktop"),
+                    autostartFile());
+    } else {
+        QFile::remove(autostartFile());
+    }
 }
 
 void SettingsDialog::onPowerSavingToggled(bool enabled)

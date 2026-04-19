@@ -9,10 +9,10 @@
 #include "NetworkWatcher.h"
 #include "WallpaperDBusService.h"
 
-// Push wallpaperFile to every Plasma desktop containment running our plugin.
-// This avoids the QML_XHR_ALLOW_FILE_READ=1 env-var requirement: the plugin
-// reads root.configuration.wallpaperFile which Plasma updates reactively.
-static void plasmaWriteConfig(const QString &key, const QString &value)
+// wallpaperFile과 wallpaperVersion을 단일 스크립트로 원자적으로 씀.
+// 두 번의 asyncCall로 분리하면 Plasma가 version을 먼저 처리해 QML이
+// 아직 갱신 안 된 경로로 리로드하는 레이스 컨디션이 발생함.
+static void plasmaWriteWallpaper(const QString &path, const QString &version)
 {
     QDBusInterface iface(
         QStringLiteral("org.kde.plasmashell"),
@@ -22,10 +22,12 @@ static void plasmaWriteConfig(const QString &key, const QString &value)
     );
     if (!iface.isValid()) return;
 
-    // Escape backslashes and double-quotes so they survive the JS string
-    QString safe = value;
-    safe.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
-    safe.replace(QLatin1Char('"'),  QStringLiteral("\\\""));
+    auto escape = [](const QString &s) {
+        QString r = s;
+        r.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+        r.replace(QLatin1Char('"'),  QStringLiteral("\\\""));
+        return r;
+    };
 
     const QString script = QStringLiteral(
         "var all=desktops();"
@@ -33,9 +35,10 @@ static void plasmaWriteConfig(const QString &key, const QString &value)
         "var d=all[i];"
         "if(d.wallpaperPlugin===\"org.bssm.ilko.video\"){"
         "d.currentConfigGroup=[\"Wallpaper\",\"org.bssm.ilko.video\",\"General\"];"
-        "d.writeConfig(\"%1\",\"%2\");"
+        "d.writeConfig(\"wallpaperFile\",\"%1\");"
+        "d.writeConfig(\"wallpaperVersion\",\"%2\");"
         "}}"
-    ).arg(key, safe);
+    ).arg(escape(path), version);
 
     iface.asyncCall(QStringLiteral("evaluateScript"), script);
 }
@@ -169,12 +172,9 @@ void SwitchController::applyWallpaper(const QString &wallpaperPath)
 
     ProfileManager::setCurrentWallpaper(wallpaperPath, m_currentProfileId);
 
-    // Push to Plasma config — plugin reads root.configuration.wallpaperFile.
-    plasmaWriteConfig(QStringLiteral("wallpaperFile"), wallpaperPath);
-    // Also bump a version counter so the QML detects a reload even when the
-    // file path itself hasn't changed (e.g. video replaced in-place).
-    plasmaWriteConfig(QStringLiteral("wallpaperVersion"),
-                      QString::number(QDateTime::currentMSecsSinceEpoch()));
+    // wallpaperFile + wallpaperVersion을 단일 D-Bus 호출로 원자적으로 씀.
+    plasmaWriteWallpaper(wallpaperPath,
+                         QString::number(QDateTime::currentMSecsSinceEpoch()));
 
     if (m_dbusService) {
         m_dbusService->emitWallpaperChanged(wallpaperPath, m_currentProfileId);

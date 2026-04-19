@@ -100,10 +100,13 @@ class SettingsDialog : public QDialog {
     Q_OBJECT
 public:
     explicit SettingsDialog(QWidget *p = nullptr);
+    static bool isAutostartEnabled();
 private slots:
     void clearCache();
     void onPowerSavingToggled(bool enabled);
+    void onAutostartToggled(bool enabled);
 private:
     QCheckBox *m_powerSavingCheck = nullptr;
     QLabel    *m_reloginLabel     = nullptr;
+    QCheckBox *m_autostartCheck   = nullptr;
 };
