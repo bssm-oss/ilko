@@ -6,7 +6,7 @@ pkgdesc="Network-based automatic wallpaper switcher for KDE Plasma with video wa
 arch=('x86_64')
 url="https://github.com/bssm-oss/ilko"
 license=('GPL-3.0-or-later')
-depends=('qt6-base' 'qt6-multimedia' 'qt6-multimedia-ffmpeg' 'plasma-workspace' 'hicolor-icon-theme' 'kirigami')
+depends=('qt6-base' 'qt6-multimedia' 'qt6-multimedia-ffmpeg' 'qt6-multimedia-gstreamer' 'plasma-workspace' 'hicolor-icon-theme' 'kirigami')
 makedepends=('cmake' 'ninja' 'extra-cmake-modules')
 
 build() {

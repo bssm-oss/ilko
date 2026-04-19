@@ -121,7 +121,13 @@ void GpuDetector::setEnabled(bool enabled)
             s << "#!/bin/sh\n";
             s << "# ilko: NVIDIA 하드웨어 비디오 디코딩 비활성화 (하이브리드 GPU 절전)\n";
             s << "# ILKO 설정에서 관리됩니다 — 직접 수정하지 마세요\n";
-            s << "export GST_PLUGIN_FEATURE_RANK=nvcodec:NONE\n";
+            // Qt6 기본값인 FFmpeg 백엔드는 CUDA를 우선 사용해 NVIDIA를 깨움.
+            // GStreamer 백엔드로 전환해야 아래 GST/VAAPI 변수들이 실제로 적용됨.
+            s << "export QT_MEDIA_BACKEND=gstreamer\n";
+            // GStreamer nvcodec 플러그인은 rank를 NONE으로 해도 plugin_init() 시
+            // CUDA를 초기화해 /dev/nvidia0을 열어버림 → NVIDIA 15W 상태 유지.
+            // CUDA 장치를 숨겨서 초기화 자체를 차단.
+            s << "export CUDA_VISIBLE_DEVICES=-1\n";
             if (!igpu.renderNode.isEmpty())
                 s << "export LIBVA_DRM_DEVICE=" << igpu.renderNode << "\n";
             if (!igpu.libvaDriver.isEmpty())
