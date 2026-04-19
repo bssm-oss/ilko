@@ -633,10 +633,10 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent)
     layout->addWidget(gpuStatusLabel);
 
     m_powerSavingCheck = new QCheckBox(
-        "NVIDIA 하드웨어 디코딩 비활성화 (내장 GPU로 절전)", this);
+        "내장 GPU로 비디오 디코딩 강제 (NVIDIA 절전)", this);
     m_powerSavingCheck->setToolTip(
-        "비디오 디코딩을 NVIDIA 대신 내장 GPU로 처리합니다.\n"
-        "AMD+NVIDIA 하이브리드 노트북에서 약 20W 절감 효과가 있습니다.\n"
+        "GStreamer nvcodec 및 VAAPI를 내장 GPU(AMD/Intel)로 강제합니다.\n"
+        "NVIDIA VAAPI 드라이버가 설치된 경우에도 내장 GPU를 사용합니다.\n"
         "변경 후 재로그인이 필요합니다.");
     m_powerSavingCheck->setChecked(GpuDetector::isPowerSavingActive());
     m_powerSavingCheck->setEnabled(isHybrid);
