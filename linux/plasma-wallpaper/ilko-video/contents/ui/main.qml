@@ -19,16 +19,17 @@ WallpaperItem {
     property string wallpaperVersion: root.configuration.wallpaperVersion || ""
 
     onWallpaperVersionChanged: {
-        // wallpaperVersion이 바뀌는 경우:
-        //   (1) 같은 경로, 파일 교체 — wallpaperSource는 그대로
-        //   (2) 프로필 전환 — wallpaperSource도 새 경로로 바뀜
-        // mediaPlayer.source 바인딩이 아직 새 경로를 반영 안 했을 수 있으므로
-        // wallpaperSource(항상 최신)를 직접 사용해 리로드.
-        if (isVideo && wallpaperSource !== "") {
-            mediaPlayer.source = ""
-            mediaPlayer.source = wallpaperSource
-            if (!root.playerPaused) mediaPlayer.play()
-        }
+        // Qt.callLater로 현재 이벤트 루프가 끝난 뒤 실행 — 이 시점에는
+        // wallpaperSource 바인딩이 새 경로로 완전히 업데이트된 상태.
+        // 즉시 실행하면 path 변경(프로필 전환)과 version 변경이 동시에 올 때
+        // wallpaperSource가 아직 구버전일 수 있어 잘못된 경로로 리로드됨.
+        Qt.callLater(function() {
+            if (isVideo && wallpaperSource !== "") {
+                mediaPlayer.source = ""
+                mediaPlayer.source = wallpaperSource
+                if (!root.playerPaused) mediaPlayer.play()
+            }
+        })
     }
 
     property bool isVideo: {
