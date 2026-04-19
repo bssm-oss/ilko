@@ -5,31 +5,54 @@ import org.kde.plasma.plasmoid
 WallpaperItem {
     id: root
 
-    // Daemon pushes wallpaperFile to Plasma config via PlasmaShell.evaluateScript.
-    // Reading root.configuration.*  requires no env vars or XHR.
+    // 시작 시 Plasma config에서 초기값 읽기 (반응형 업데이트 안 됨)
     property string wallpaperSource: {
         var f = root.configuration.wallpaperFile || ""
         if (!f) return ""
-        // Ensure file:// URL with encoded special chars ({} in UUIDs)
         return f.startsWith("file://") ? f : encodeURI("file://" + f)
     }
 
-    property bool   playerPaused:    root.configuration.playerPaused    || false
-    property double playerRate:      root.configuration.playerRate      || 1.0
-    property string wallpaperVersion: root.configuration.wallpaperVersion || ""
+    property bool   playerPaused: root.configuration.playerPaused || false
+    property double playerRate:   root.configuration.playerRate   || 1.0
 
-    onWallpaperVersionChanged: {
-        // Qt.callLater로 현재 이벤트 루프가 끝난 뒤 실행 — 이 시점에는
-        // wallpaperSource 바인딩이 새 경로로 완전히 업데이트된 상태.
-        // 즉시 실행하면 path 변경(프로필 전환)과 version 변경이 동시에 올 때
-        // wallpaperSource가 아직 구버전일 수 있어 잘못된 경로로 리로드됨.
-        Qt.callLater(function() {
-            if (isVideo && wallpaperSource !== "") {
-                mediaPlayer.source = ""
-                mediaPlayer.source = wallpaperSource
-                if (!root.playerPaused) mediaPlayer.play()
+    // current_wallpaper.json 폴링으로 런타임 변경 감지
+    // root.configuration은 외부 writeConfig에 반응하지 않아서 XHR 폴링이 필요함.
+    property string _homePath: {
+        var f = root.configuration.wallpaperFile || ""
+        var idx = f.indexOf("/.ilko/")
+        return idx >= 0 ? f.substring(0, idx) : ""
+    }
+    property string _appliedSource: ""
+    property int    _appliedTimestamp: 0
+
+    Timer {
+        id: pollTimer
+        interval: 1500
+        running: root._homePath !== ""
+        repeat: true
+        onTriggered: {
+            var xhr = new XMLHttpRequest()
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState !== 4 || xhr.status !== 200) return
+                try {
+                    var data = JSON.parse(xhr.responseText)
+                    var rawPath = data.wallpaperFile  || ""
+                    var ts      = data.timestamp      || 0
+                    if (!rawPath) return
+                    // 경로도 같고 타임스탬프도 같으면 변경 없음
+                    if (rawPath === root._appliedSource && ts === root._appliedTimestamp) return
+                    root._appliedSource    = rawPath
+                    root._appliedTimestamp = ts
+                    var encoded = rawPath.startsWith("file://") ? rawPath : encodeURI("file://" + rawPath)
+                    root.wallpaperSource = encoded
+                    mediaPlayer.source = ""
+                    mediaPlayer.source = encoded
+                    if (!root.playerPaused) mediaPlayer.play()
+                } catch(e) {}
             }
-        })
+            xhr.open("GET", "file://" + root._homePath + "/.ilko/current_wallpaper.json")
+            xhr.send()
+        }
     }
 
     property bool isVideo: {
@@ -79,7 +102,6 @@ WallpaperItem {
     MediaPlayer {
         id: mediaPlayer
         videoOutput: videoOutput
-        // No AudioOutput — skipping audio decode saves CPU
         source: isVideo ? wallpaperSource : ""
         loops: MediaPlayer.Infinite
         onMediaStatusChanged: {
@@ -90,7 +112,6 @@ WallpaperItem {
         }
         onErrorOccurred: function(e, msg) {
             console.log("ILKO MediaPlayer error:", msg)
-            // Stop immediately — don't spam errors by looping a broken file
             mediaPlayer.stop()
         }
     }
@@ -104,5 +125,7 @@ WallpaperItem {
 
     Component.onCompleted: {
         console.log("ILKO wallpaper plugin started, source:", wallpaperSource)
+        // 초기 적용 경로 기록 — 첫 폴링에서 불필요한 리로드 방지
+        _appliedSource = root.configuration.wallpaperFile || ""
     }
 }
