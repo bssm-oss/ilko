@@ -2,6 +2,9 @@
 
 #include <QDebug>
 #include <QDateTime>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QDBusConnection>
 #include <QDBusInterface>
 
@@ -97,31 +100,6 @@ void SwitchController::onConnectionChanged(bool connected)
     // so onNetworkChanged handles the wallpaper switch — no double-apply here.
 }
 
-void SwitchController::onLowBattery(bool low)
-{
-    qDebug() << "Battery low state:" << low;
-
-    if (!low) {
-        ProfileManager::writePlayerControl(false, 1.0, "batteryOk");
-        plasmaWritePlayerControl(false, 1.0);
-        return;
-    }
-
-    if (m_currentProfileId.isEmpty()) return;
-    m_profileManager->load();
-    const Profile *profile = nullptr;
-    for (const Profile &p : m_profileManager->profiles()) {
-        if (p.id == m_currentProfileId) {
-            profile = &p;
-            break;
-        }
-    }
-    if (!profile || !profile->batteryPause) return;
-
-    ProfileManager::writePlayerControl(true, 1.0, "lowBattery");
-    plasmaWritePlayerControl(true, 1.0);
-}
-
 void SwitchController::setWallpaperByMac(const QString &mac)
 {
     if (!m_profileManager) return;
@@ -190,14 +168,33 @@ void SwitchController::applyWallpaper(const QString &wallpaperPath)
 {
     if (wallpaperPath.isEmpty()) return;
 
-    ProfileManager::setCurrentWallpaper(wallpaperPath, m_currentProfileId);
+    // 영상 파일은 /dev/shm에 캐싱 — 루프 재생 시 디스크 I/O 없이 RAM에서 읽음.
+    // 크기가 다를 때만 재복사 (프로파일 전환 등으로 파일이 바뀐 경우).
+    QString playPath = wallpaperPath;
+    const QString ext = wallpaperPath.mid(wallpaperPath.lastIndexOf('.') + 1).toLower();
+    constexpr qint64 kShmMaxBytes = 100LL * 1024 * 1024;  // 100 MB
+    if (QStringList{"mp4", "webm", "mov", "avi", "mkv"}.contains(ext)
+        && QFileInfo(wallpaperPath).size() <= kShmMaxBytes) {
+        const QString shmDir = QStringLiteral("/dev/shm/ilko");
+        QDir().mkpath(shmDir);
+        const QString shmPath = shmDir + "/" + QFileInfo(wallpaperPath).fileName();
+        if (QFileInfo(shmPath).size() != QFileInfo(wallpaperPath).size()) {
+            QFile::remove(shmPath);
+            QFile::copy(wallpaperPath, shmPath);
+        }
+        if (QFile::exists(shmPath))
+            playPath = shmPath;
+    }
 
-    // wallpaperFile + wallpaperVersion을 단일 D-Bus 호출로 원자적으로 씀.
+    // current_wallpaper.json → /dev/shm 경로 (QML 폴링으로 RAM에서 재생)
+    // Plasma config wallpaperFile → 원본 경로 (QML의 _homePath 추출에 필요)
+    ProfileManager::setCurrentWallpaper(playPath, m_currentProfileId);
+
     plasmaWriteWallpaper(wallpaperPath,
                          QString::number(QDateTime::currentMSecsSinceEpoch()));
 
     if (m_dbusService) {
-        m_dbusService->emitWallpaperChanged(wallpaperPath, m_currentProfileId);
+        m_dbusService->emitWallpaperChanged(playPath, m_currentProfileId);
     }
-    qDebug() << "Wallpaper applied:" << wallpaperPath;
+    qDebug() << "Wallpaper applied:" << playPath << "(cached from" << wallpaperPath << ")";
 }
