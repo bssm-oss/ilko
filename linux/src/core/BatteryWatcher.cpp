@@ -95,48 +95,67 @@ void BatteryWatcher::writeStateFile()
     }
 }
 
+static QString findBatteryPath()
+{
+    const QDir psDir("/sys/class/power_supply");
+    for (const QString &entry : psDir.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        QFile typeFile(psDir.filePath(entry) + "/type");
+        if (typeFile.open(QIODevice::ReadOnly)) {
+            if (typeFile.readAll().trimmed() == "Battery") {
+                typeFile.close();
+                return psDir.filePath(entry);
+            }
+            typeFile.close();
+        }
+    }
+    return {};
+}
+
 void BatteryWatcher::updateFromUPower()
 {
-    QDBusMessage reply = m_upowerInterface->call("Get",
-        "org.freedesktop.UPower", "RemainingTime");
+    // UPower manager object has OnBattery bool but not per-device Percentage/State.
+    // Use OnBattery for discharge detection; read percentage from sysfs.
+    QDBusMessage reply = m_upowerInterface->call("GetAll", "org.freedesktop.UPower");
+    if (reply.type() != QDBusMessage::ReplyMessage) {
+        updateFromSysfs();
+        return;
+    }
 
-    if (reply.type() == QDBusMessage::ReplyMessage) {
-        QDBusVariant var = reply.arguments().first().value<QDBusVariant>();
-        QVariant value = var.variant();
+    QVariantMap map = qdbus_cast<QVariantMap>(reply.arguments().first());
+    if (!map.contains("OnBattery")) {
+        updateFromSysfs();
+        return;
+    }
 
-        QDBusMessage propsReply = m_upowerInterface->call("GetAll",
-            "org.freedesktop.UPower");
+    bool onBattery = map.value("OnBattery").toBool();
+    m_state = onBattery ? Discharging : Charging;
+    m_isPresent = true;
 
-        if (propsReply.type() == QDBusMessage::ReplyMessage) {
-            QVariantMap map = qdbus_cast<QVariantMap>(propsReply.arguments().first());
-            if (map.contains("Percentage")) {
-                m_percentage = map.value("Percentage").toInt();
-            }
-            if (map.contains("State")) {
-                QString state = map.value("State").toString();
-                if (state == "charging") m_state = Charging;
-                else if (state == "discharging") m_state = Discharging;
-                else if (state == "fully-charged") m_state = Full;
-                else m_state = Unknown;
-            }
-            m_isPresent = true;
+    const QString batPath = findBatteryPath();
+    if (!batPath.isEmpty()) {
+        QFile capacityFile(batPath + "/capacity");
+        if (capacityFile.open(QIODevice::ReadOnly)) {
+            m_percentage = capacityFile.readAll().trimmed().toInt();
+            capacityFile.close();
         }
     }
 }
 
 void BatteryWatcher::updateFromSysfs()
 {
-    QFile capacityFile("/sys/class/power_supply/BAT0/capacity");
+    const QString batPath = findBatteryPath();
+    if (batPath.isEmpty()) return;
+
+    QFile capacityFile(batPath + "/capacity");
     if (capacityFile.open(QIODevice::ReadOnly)) {
-        QString data = capacityFile.readAll().trimmed();
-        m_percentage = data.toInt();
+        m_percentage = capacityFile.readAll().trimmed().toInt();
         capacityFile.close();
-        m_isPresent = m_percentage >= 0;
+        m_isPresent = true;
     }
 
-    QFile statusFile("/sys/class/power_supply/BAT0/status");
+    QFile statusFile(batPath + "/status");
     if (statusFile.open(QIODevice::ReadOnly)) {
-        QString status = statusFile.readAll().trimmed();
+        const QString status = statusFile.readAll().trimmed();
         if (status == "Charging") m_state = Charging;
         else if (status == "Discharging") m_state = Discharging;
         else if (status == "Full") m_state = Full;

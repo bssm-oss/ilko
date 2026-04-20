@@ -16,7 +16,7 @@ WallpaperItem {
     property bool   playerPaused: root.configuration.playerPaused || false
     property double playerRate:   root.configuration.playerRate   || 1.0
 
-    // wallpaperFile 경로에서 홈 디렉토리 추출
+    // wallpaperFile 경로에서 홈 디렉토리 추출 (Plasma config엔 항상 원본 경로가 들어옴)
     property string _homePath: {
         var f = root.configuration.wallpaperFile || ""
         var idx = f.indexOf("/.ilko/")
@@ -24,6 +24,31 @@ WallpaperItem {
     }
     property string _appliedSource:    ""
     property int    _appliedTimestamp: 0
+
+    // player_control.json 폴링 — 배터리/화면 잠금 시 재생 제어
+    Timer {
+        interval: 1000
+        running: root._homePath !== ""
+        repeat: true
+        onTriggered: {
+            var xhr = new XMLHttpRequest()
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState !== 4 || xhr.status !== 200) return
+                try {
+                    var data = JSON.parse(xhr.responseText)
+                    root.playerPaused = data.paused || false
+                    root.playerRate = data.playbackRate || 1.0
+                    if (root.playerPaused) {
+                        mediaPlayer.pause()
+                    } else if (mediaPlayer.playbackState === MediaPlayer.PausedState) {
+                        mediaPlayer.play()
+                    }
+                } catch(e) {}
+            }
+            xhr.open("GET", "file://" + root._homePath + "/.ilko/player_control.json")
+            xhr.send()
+        }
+    }
 
     // current_wallpaper.json 폴링 — Plasma config 변경 알림이 런타임에 동작 안 해서 필요
     Timer {

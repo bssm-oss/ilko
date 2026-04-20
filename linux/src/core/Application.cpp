@@ -66,15 +66,18 @@ void Application::initialize()
     d->switchController->start();
 
     // Battery state → player control
-    connect(d->batteryWatcher.get(), &BatteryWatcher::chargingChanged,
-            this, &Application::onChargingChanged);
-
     connect(d->batteryWatcher.get(), &BatteryWatcher::stateChanged, this, [this](BatteryWatcher::BatteryState state) {
+        bool wasOnBattery = d->onBattery;
+        d->onBattery = (state == BatteryWatcher::Discharging);
+
         AppConnector::Message msg;
         msg.type = AppConnector::MessageType::BatteryInfo;
         msg.sender = "daemon";
         msg.data = QJsonObject{{"state", static_cast<int>(state)}};
         d->appConnector->sendToPlugin(msg);
+
+        if (wasOnBattery != d->onBattery)
+            updatePlayerControl();
     });
 
     // NOTE: connectionStateChanged is already connected inside SwitchController's
@@ -109,6 +112,10 @@ void Application::initialize()
         }
     });
 
+    // Seed onBattery from current state — the initial stateChanged fires before
+    // connections are wired, so we can't rely on the signal for the first value.
+    d->onBattery = (d->batteryWatcher->state() == BatteryWatcher::Discharging);
+
     // Write initial player control state
     updatePlayerControl();
 
@@ -126,12 +133,6 @@ void Application::initialize()
 void Application::onScreenLockChanged(bool active)
 {
     d->screenLocked = active;
-    updatePlayerControl();
-}
-
-void Application::onChargingChanged(bool charging)
-{
-    d->onBattery = !charging;
     updatePlayerControl();
 }
 
@@ -168,7 +169,16 @@ void Application::updatePlayerControl()
     if (d->screenLocked) {
         paused = true;  rate = 1.0;
     } else if (d->onBattery) {
-        paused = false; rate = 0.75;
+        bool batteryPause = false;
+        const QString profileId = d->switchController->currentProfileId();
+        for (const Profile &p : d->profileManager->profiles()) {
+            if (p.id == profileId) {
+                batteryPause = p.batteryPause;
+                break;
+            }
+        }
+        paused = batteryPause;
+        rate   = batteryPause ? 1.0 : 0.75;
     } else {
         paused = false; rate = 1.0;
     }

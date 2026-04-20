@@ -24,7 +24,6 @@ public:
 
 private slots:
     void onScreenLockChanged(bool active);
-    void onChargingChanged(bool charging);
 
 private:
     void updatePlayerControl();
