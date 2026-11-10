@@ -175,6 +175,7 @@ struct ToolbarView: View {
 
 #Preview {
     SettingsView(viewModel: WallpaperViewModel())
+        .environmentObject(LockScreenCoordinator())
         .environmentObject(ProfileManager())
         .environmentObject(LocationWatcher())
 }

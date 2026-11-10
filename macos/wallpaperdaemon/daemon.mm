@@ -879,8 +879,20 @@ static void terminateWallpaperDaemonCallback(CFNotificationCenterRef center,
   [[NSUserDefaults standardUserDefaults] setFloat:volume
                                            forKey:@"wallpapervolume"];
 }
+// 잠금화면 영상(Aerial 슬롯) 모드: 시스템 배경은 앱이 Aerial 로 지정하므로
+// daemon 이 첫 프레임 png 를 시스템 배경으로 덮어쓰면 안 된다.
+static BOOL LockScreenModeEnabled(void) {
+  CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication);
+  Boolean valid = false;
+  Boolean on = CFPreferencesGetAppBooleanValue(
+      CFSTR("lockscreen_enabled"), kCFPreferencesCurrentApplication, &valid);
+  return valid && on;
+}
+
 - (bool)setStaticWallpaper {
   @autoreleasepool {
+    if (LockScreenModeEnabled())
+      return false;
     if (!_framePath)
       return false;
     if (![[NSFileManager defaultManager] fileExistsAtPath:_framePath])
@@ -989,6 +1001,19 @@ static void SpaceChangeCallback(CFNotificationCenterRef center, void *observer,
   }
 }
 
+static void LockScreenChangedCallback(CFNotificationCenterRef center,
+                                      void *observer, CFStringRef name,
+                                      const void *object,
+                                      CFDictionaryRef userInfo) {
+  VideoWallpaperDaemon *daemon = (__bridge VideoWallpaperDaemon *)observer;
+  // 기능이 꺼지면 기존 동작(첫 프레임 png 를 시스템 배경으로)을 즉시 복원
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (!LockScreenModeEnabled()) {
+      [daemon setStaticWallpaper];
+    }
+  });
+}
+
 static void scaleModeChangeCallback(CFNotificationCenterRef center,
                                     void *observer, CFStringRef name,
                                     const void *object,
@@ -1085,6 +1110,12 @@ int main(int argc, const char *argv[]) {
         CFNotificationCenterGetDarwinNotifyCenter(),
         (__bridge const void *)daemon, scaleModeChangeCallback,
         CFSTR("com.live.wallpaper.scaleModeChanged"), NULL,
+        CFNotificationSuspensionBehaviorDeliverImmediately);
+
+    CFNotificationCenterAddObserver(
+        CFNotificationCenterGetDarwinNotifyCenter(),
+        (__bridge const void *)daemon, LockScreenChangedCallback,
+        CFSTR("com.live.wallpaper.lockScreenChanged"), NULL,
         CFNotificationSuspensionBehaviorDeliverImmediately);
 
     [[NSRunLoop mainRunLoop] run];
