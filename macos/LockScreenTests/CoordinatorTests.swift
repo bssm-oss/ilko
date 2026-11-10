@@ -137,4 +137,46 @@ func coordinatorTests() async {
         e.coord.selectSlot(cA)
         expect(e.coord.selectedAssetID == cA, "A accepted")
     }
+
+    // 프로필 저장 시 변환: 끝날 때까지 기다리고, 시스템 배경은 건드리지 않는다
+    await test("testConvertForProfileWaitsWithoutApplying") {
+        let e = try CoordEnv()
+        let a = try await e.video("a.mov", seconds: 0.5)
+        e.coord.setEnabled(true)
+        let t = Task { await e.coord.convertForProfile(path: a) }
+        await Task.yield()
+        expect(e.coord.progress[a] != nil, "progress visible while converting")
+        let ok = await t.value
+        expect(ok, "converted")
+        let key = try AerialEncoder.cacheKey(for: URL(fileURLWithPath: a))
+        expect(FileManager.default.fileExists(atPath: e.cache.appendingPathComponent("\(key).mov").path), "cached")
+        expect(e.coord.progress.isEmpty, "progress cleared, got \(e.coord.progress)")
+        expect(e.slot.currentSelectedAssetID() == nil, "slot not applied")
+        expect(e.proc.restarts == 0, "no wallpaper restart")
+    }
+
+    await test("testConvertForProfileSkippedWhenDisabledOrImage") {
+        let e = try CoordEnv()
+        let a = try await e.video("a.mov", seconds: 0.3)
+        expect(await e.coord.convertForProfile(path: a), "disabled → nothing to wait for")
+        e.coord.setEnabled(true)
+        expect(await e.coord.convertForProfile(path: e.dir.appendingPathComponent("x.png").path), "image → nothing")
+        let movs = (try? FileManager.default.contentsOfDirectory(atPath: e.cache.path))?.filter { $0.hasSuffix(".mov") } ?? []
+        expect(movs.isEmpty, "nothing encoded, got \(movs)")
+    }
+
+    // 사용자가 변환 창에서 취소하면 변환이 멈추고 false
+    await test("testConvertForProfileCancel") {
+        let e = try CoordEnv()
+        let a = try await e.video("long.mov", seconds: 6, size: CGSize(width: 1280, height: 720))
+        e.coord.setEnabled(true)
+        let t = Task { await e.coord.convertForProfile(path: a) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        t.cancel()
+        expect(await t.value == false, "cancelled → false")
+        expect(e.coord.progress.isEmpty, "progress cleared")
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let movs = (try? FileManager.default.contentsOfDirectory(atPath: e.cache.path))?.filter { $0.hasSuffix(".mov") } ?? []
+        expect(movs.isEmpty, "no cache after cancel, got \(movs)")
+    }
 }

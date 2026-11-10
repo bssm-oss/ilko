@@ -42,6 +42,8 @@ final class LockScreenCoordinator: ObservableObject {
     static let assetKey = "lockscreen_asset_id"
 
     @Published private(set) var isEncoding = false
+    /// 변환 중인 영상 경로 → 진행률(0~1)
+    @Published private(set) var progress: [String: Double] = [:]
     @Published private(set) var isSupported = false
     @Published var notice: LockScreenNotice?
     @Published private(set) var isEnabled: Bool
@@ -79,6 +81,12 @@ final class LockScreenCoordinator: ObservableObject {
         selectedAssetID = defaults.string(forKey: Self.assetKey)
         if !isSupported && isEnabled { persistEnabled(false) }
 
+        Task { [weak self] in
+            await encoder.setProgressHandler { url, p in
+                Task { @MainActor in self?.updateProgress(url.path, p) }
+            }
+        }
+
         unlockObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main
         ) { [weak self] _ in
@@ -104,6 +112,21 @@ final class LockScreenCoordinator: ObservableObject {
         lastVideoPath = nil
         appliedAssetID = nil  // 시스템 배경이 이미지로 바뀜 → 다음 영상 때 다시 적용
         startJob { _ in }     // 진행 중 변환 취소
+    }
+
+    /// 프로필 저장 시 호출: 잠금화면용 변환을 끝까지 기다린다(적용은 하지 않음).
+    /// 기능이 꺼져 있거나 영상이 아니면 바로 true. 호출 Task 가 취소되면 변환을 멈추고 false.
+    func convertForProfile(path: String) async -> Bool {
+        guard isEnabled, ["mp4", "mov"].contains((path as NSString).pathExtension.lowercased()) else { return true }
+        progress[path] = progress[path] ?? 0
+        defer { progress[path] = nil }
+        do {
+            _ = try await encoder.encode(source: URL(fileURLWithPath: path))
+            return !Task.isCancelled
+        } catch {
+            print("[LockScreen] 프로필 변환 실패/취소: \(error)")
+            return false
+        }
     }
 
     // MARK: - 설정 UI 에서 호출
@@ -225,6 +248,11 @@ final class LockScreenCoordinator: ObservableObject {
             self.busy = false
             self.isEncoding = false
         }
+    }
+
+    private func updateProgress(_ path: String, _ p: Double) {
+        guard let old = progress[path] else { return }  // 이미 끝났거나 추적하지 않는 경로
+        if p > old { progress[path] = p }
     }
 
     private func isCurrent(_ gen: Int) -> Bool { gen == generation && !Task.isCancelled }

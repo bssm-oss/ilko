@@ -13,15 +13,20 @@ actor AerialEncoder {
         .appendingPathComponent("Library/Application Support/ilko/lockscreen-cache")
     nonisolated static let outputFPS: Int32 = 240
     nonisolated static let maxCachedFiles = 5
-    /// 인코딩 방식이 바뀌면 올려서 이전 캐시를 무효화한다.
-    nonisolated static let formatVersion = "v2"
 
     private let cacheDir: URL
     /// 같은 원본에 대한 진행 중 변환 + 기다리는 호출자들. 대기자가 모두 취소되면 변환도 취소한다.
     private var inflight: [String: (task: Task<URL, Error>, waiters: Set<UUID>)] = [:]
 
+    /// 변환 진행률(0~1) 보고 대상: (원본 URL, 진행률). 백그라운드 스레드에서 호출된다.
+    private var progressHandler: (@Sendable (URL, Double) -> Void)?
+
     init(cacheDir: URL = AerialEncoder.defaultCacheDir) {
         self.cacheDir = cacheDir
+    }
+
+    func setProgressHandler(_ handler: @escaping @Sendable (URL, Double) -> Void) {
+        progressHandler = handler
     }
 
     /// 변환된 캐시 파일 URL 을 반환한다(이미 있으면 즉시).
@@ -33,10 +38,10 @@ actor AerialEncoder {
         if let running = inflight[key] {
             task = running.task
         } else {
-            let dir = cacheDir
+            let dir = cacheDir, handler = progressHandler
             task = Task.detached(priority: .utility) {
                 try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                try await Self.transcode(source: source, to: dest)
+                try await Self.transcode(source: source, to: dest) { handler?(source, $0) }
                 return dest
             }
             inflight[key] = (task, [])
@@ -65,14 +70,13 @@ actor AerialEncoder {
         }
     }
 
-    /// 원본 내용 기반 캐시 키 (SHA-256 앞 16자 + 포맷 버전)
+    /// 원본 내용 기반 캐시 키 (SHA-256 앞 16자)
     nonisolated static func cacheKey(for source: URL) throws -> String {
         guard let fh = try? FileHandle(forReadingFrom: source) else {
             throw LockScreenError.io("cannot read \(source.path)")
         }
         defer { try? fh.close() }
         var hasher = SHA256()
-        hasher.update(data: Data(formatVersion.utf8))
         while let chunk = try fh.read(upToCount: 1 << 20), !chunk.isEmpty {
             hasher.update(data: chunk)
         }
@@ -95,7 +99,8 @@ actor AerialEncoder {
 
     // MARK: - 변환
 
-    nonisolated private static func transcode(source: URL, to dest: URL) async throws {
+    nonisolated private static func transcode(source: URL, to dest: URL,
+                                              progress: @escaping @Sendable (Double) -> Void) async throws {
         let asset = AVURLAsset(url: source)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw LockScreenError.encodeFailed("no video track")
@@ -114,14 +119,15 @@ actor AerialEncoder {
             .concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
             .concatenating(flipOut)
 
-        let content = try await contentRect(asset: asset, size: orientedSize)
+        // 레터박스는 영상의 일부로 보고 자르지 않는다 (전체 프레임 사용)
+        let content = CGRect(origin: .zero, size: orientedSize)
         let outSize = outputSize(for: orientedSize)
 
         let tmp = dest.deletingPathExtension().appendingPathExtension("tmp.mov")
         try? FileManager.default.removeItem(at: tmp)
         do {
             try await write(asset: asset, track: track, fps: fps, normalize: normalize,
-                            content: content, outSize: outSize, to: tmp)
+                            content: content, outSize: outSize, to: tmp, progress: progress)
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.moveItem(at: tmp, to: dest)
         } catch {
@@ -139,43 +145,15 @@ actor AerialEncoder {
         return CGSize(width: even(size.width), height: even(size.height))
     }
 
-    /// 중간 프레임에서 위/아래/좌/우 검은 띠를 재고, 띠를 뺀 영역(좌하단 원점, CI 좌표)을 반환.
-    nonisolated private static func contentRect(asset: AVURLAsset, size: CGSize) async throws -> CGRect {
-        let full = CGRect(origin: .zero, size: size)
-        let dur = try await asset.load(.duration)
-        let g = AVAssetImageGenerator(asset: asset)
-        g.appliesPreferredTrackTransform = true
-        guard let (img, _) = try? await g.image(at: CMTimeMultiplyByFloat64(dur, multiplier: 0.5)) else { return full }
-        let w = img.width, h = img.height
-        guard w > 0, h > 0,
-            let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
-                                space: CGColorSpaceCreateDeviceRGB(),
-                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return full }
-        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
-        let p = ctx.data!.assumingMemoryBound(to: UInt8.self)
-        // CGContext 메모리는 위쪽 행부터
-        func px(_ x: Int, _ y: Int) -> Int { let i = (y * w + x) * 4; return Int(p[i]) + Int(p[i + 1]) + Int(p[i + 2]) }
-        func rowDark(_ y: Int) -> Bool { stride(from: 0, to: w, by: 4).allSatisfy { px($0, y) < 40 } }
-        func colDark(_ x: Int) -> Bool { stride(from: 0, to: h, by: 4).allSatisfy { px(x, $0) < 40 } }
-        // 한 변당 최대 25% 까지만 (전체가 어두운 장면을 통째로 잘라내지 않도록), 2px 미만은 노이즈로 무시
-        func measure(_ limit: Int, _ dark: (Int) -> Bool) -> Int {
-            var n = 0; while n < limit && dark(n) { n += 1 }
-            return n >= limit || n < 2 ? 0 : n
-        }
-        let top = measure(h / 4) { rowDark($0) }
-        let bottom = measure(h / 4) { rowDark(h - 1 - $0) }
-        let left = measure(w / 4) { colDark($0) }
-        let right = measure(w / 4) { colDark(w - 1 - $0) }
-        let sx = size.width / CGFloat(w), sy = size.height / CGFloat(h)
-        return CGRect(x: CGFloat(left) * sx, y: CGFloat(bottom) * sy,
-                      width: size.width - CGFloat(left + right) * sx,
-                      height: size.height - CGFloat(top + bottom) * sy)
-    }
-
     nonisolated private static func write(asset: AVURLAsset, track: AVAssetTrack, fps: Float,
                                           normalize: CGAffineTransform, content: CGRect, outSize: CGSize,
-                                          to url: URL) async throws {
+                                          to url: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+        let duration = max(try await asset.load(.duration).seconds, 0.001)
+        var lastReported = -1.0
+        func report(_ seconds: Double) {
+            let p = min(max(seconds / duration, 0), 1)
+            if p - lastReported >= 0.01 || p >= 1 { lastReported = p; progress(p) }
+        }
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
@@ -208,7 +186,7 @@ actor AerialEncoder {
         }
         writer.startSession(atSourceTime: .zero)
 
-        // 띠 영역 crop → 출력 크기를 채우도록 확대 → 중앙 crop
+        // 출력 크기에 맞게 확대 → 중앙 crop (4K 축소 시 비율 유지)
         let scale = max(outSize.width / content.width, outSize.height / content.height)
         let place = CGAffineTransform(translationX: -content.minX, y: -content.minY)
             .concatenating(CGAffineTransform(scaleX: scale, y: scale))
@@ -250,6 +228,7 @@ actor AerialEncoder {
             guard let src = CMSampleBufferGetImageBuffer(sb) else { continue }
             let pts = CMSampleBufferGetPresentationTimeStamp(sb).seconds
             if let p = pending { try await emit(p.buffer, until: pts) }
+            report(pts * 0.98)  // 마무리(finishWriting) 몫을 남겨 둔다
             pending = (try render(src), pts)
         }
         if let p = pending { try await emit(p.buffer, until: p.pts + frameDur) }
@@ -260,5 +239,6 @@ actor AerialEncoder {
         guard writer.status == .completed, nextTick > 0 else {
             throw LockScreenError.encodeFailed("write: \(writer.error as Any)")
         }
+        report(duration)
     }
 }

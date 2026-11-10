@@ -4,6 +4,7 @@ import SwiftUI
 // MARK: - Settings View
 struct SettingsView: View {
     @ObservedObject var viewModel: WallpaperViewModel
+    @EnvironmentObject var lockScreen: LockScreenCoordinator
     @Environment(\.dismiss) private var dismiss
     @State private var showFolderPicker = false
     @AppStorage(UserDefaultsKeys.scaleMode) var scaleMode: Int = 0
@@ -131,6 +132,8 @@ struct SettingsView: View {
                     // Reset User Data
                     SettingRow(title: L.resetUserData) {
                         Button(L.reset) {
+                            // 설정이 지워지기 전에 잠금화면 기능을 꺼서 시스템 배경을 원래대로 되돌린다
+                            lockScreen.setEnabled(false)
                             viewModel.resetUserData()
                         }
                     }

@@ -16,7 +16,9 @@ func encoderTests() async {
         let fps = try await nominalFPS(out)
         expect(fps > 239 && fps < 241, "fps≈240, got \(fps)")
         let bars = try await blackBarRows(out)
-        expect(bars.top <= 1 && bars.bottom <= 1, "bars cropped, got \(bars)")
+        // 레터박스는 원본 그대로 둔다 (자르지 않음): 20px 띠가 남아 있어야 한다
+        expect(bars.top >= 16 && bars.bottom >= 16, "bars kept, got \(bars)")
+        expect(try await naturalSize(out) == CGSize(width: 640, height: 360), "size kept")
     }
 
     await test("testCacheHit") {
@@ -58,6 +60,30 @@ func encoderTests() async {
         }
         let movs = try FileManager.default.contentsOfDirectory(atPath: cache.path).filter { $0.hasSuffix(".mov") }
         expect(movs.count == 5, "cache pruned to 5, got \(movs.count)")
+    }
+}
+
+nonisolated final class ProgressBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var v: [Double] = []
+    func add(_ x: Double) { lock.lock(); v.append(x); lock.unlock() }
+    var values: [Double] { lock.lock(); defer { lock.unlock() }; return v }
+}
+
+func encoderProgressTests() async {
+    let work = makeTempDir()
+    // 변환 진행률을 0~1 로 늘어나며 보고해야 사용자에게 보여줄 수 있다
+    await test("testEncodeReportsProgress") {
+        let src = work.appendingPathComponent("p.mov")
+        try await makeTestVideo(url: src, size: CGSize(width: 320, height: 180), fps: 30, seconds: 1, barHeight: 0, withAudio: false)
+        let enc = AerialEncoder(cacheDir: work.appendingPathComponent("pc"))
+        let box = ProgressBox()
+        await enc.setProgressHandler { url, p in if url == src { box.add(p) } }
+        _ = try await enc.encode(source: src)
+        let v = box.values
+        expect(v.count >= 2, "several progress reports, got \(v.count)")
+        expect(v == v.sorted(), "monotonic")
+        expect((v.last ?? 0) > 0.9 && (v.last ?? 2) <= 1.0, "ends near 1, got \(v.last ?? -1)")
     }
 }
 
