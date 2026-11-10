@@ -14,7 +14,7 @@ XCODE_FLAGS = \
 	CODE_SIGNING_REQUIRED=NO \
 	CODE_SIGNING_ALLOWED=NO
 
-.PHONY: build run log clean submodule release dmg
+.PHONY: build run log clean submodule release dmg test-lockscreen typecheck
 
 ## 서브모듈 초기화 (최초 1회)
 submodule:
@@ -63,6 +63,24 @@ dmg: release
 		"$(DMG_DIR)/$(DMG_NAME)"
 	rm -rf /tmp/dmg-staging
 	@echo "✅ DMG 생성 완료: $(DMG_DIR)/$(DMG_NAME)"
+
+## 잠금화면(Aerial) 코어 테스트 — Xcode 없이 swiftc 로 빌드·실행
+SWIFT_SDK      = $(shell xcrun --show-sdk-path)
+SWIFT_FLAGS    = -sdk $(SWIFT_SDK) -target arm64-apple-macos26.1 -swift-version 6 -default-isolation MainActor
+LOCKSCREEN_SRC = LockScreen/AerialCatalog.swift LockScreen/AerialEncoder.swift LockScreen/LockScreenSlot.swift
+TEST_BIN       = build/lockscreen-tests/runner
+
+test-lockscreen:
+	mkdir -p build/lockscreen-tests
+	swiftc $(SWIFT_FLAGS) -O $(wildcard $(LOCKSCREEN_SRC)) LockScreenTests/*.swift -o $(TEST_BIN)
+	./$(TEST_BIN)
+
+## 앱 Swift 소스 타입체크 (VideoGridView 의 SwiftUIMacros 오류는 CLT 한계로 무시)
+typecheck:
+	swiftc -typecheck $(SWIFT_FLAGS) -cxx-interoperability-mode=default \
+		-import-objc-header LiveWallpaper-Bridging-Header.h -I . *.swift LockScreen/*.swift 2>&1 \
+		| grep -E "error:" | grep -v "SwiftUIMacros\|VideoGridView.swift" ; \
+		test $$? -eq 1 && echo "typecheck OK (baseline VideoGridView macro errors ignored)"
 
 ## 빌드 결과물 삭제
 clean:

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "assets": [
+    {"id": "AAAA0000-0000-0000-0000-000000000001", "accessibilityLabel": "Asset A", "showInTopLevel": true, "includeInShuffle": true,
+     "url-4K-SDR-240FPS": "https://example.invalid/a.mov"},
+    {"id": "BBBB0000-0000-0000-0000-000000000002", "accessibilityLabel": "Asset B", "showInTopLevel": false, "includeInShuffle": true,
+     "url-4K-SDR-240FPS": "https://example.invalid/b.mov"},
+    {"id": "CCCC0000-0000-0000-0000-000000000003", "accessibilityLabel": "Asset C", "showInTopLevel": false, "includeInShuffle": false,
+     "url-4K-SDR-240FPS": "https://example.invalid/c.mov"},
+    {"id": "DDDD0000-0000-0000-0000-000000000004", "accessibilityLabel": "No URL", "showInTopLevel": true, "includeInShuffle": true}
+  ]
+}
