@@ -76,6 +76,7 @@ enum L {
     static let rotationDelay = "전환 간격"
     static let lockScreenSection = "잠금화면"
     static let lockScreenVideo = "잠금화면에도 영상 적용"
+    static let lockScreenSaver = "화면 보호기에도 영상 적용"
     static let lockScreenSlot = "덮어쓸 Aerial 배경"
     static let lockScreenSlotHint = "선택한 Aerial은 시스템 설정에서 원래 영상 대신 ILKO 영상으로 재생됩니다."
     static let lockScreenEncoding = "잠금화면용 영상 변환 중…"

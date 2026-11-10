@@ -57,15 +57,16 @@ nonisolated struct LockScreenSlot: Sendable {
 
     // MARK: - apply / restore
 
-    func apply(encoded: URL, asset: AerialAsset) throws {
+    /// - Parameter screenSaver: true 면 화면 보호기(Idle)도 이 Aerial, false 면 화면 보호기는 원래 설정 유지
+    func apply(encoded: URL, asset: AerialAsset, screenSaver: Bool = false) throws {
         var index = try readIndex()
         try validate(index)
 
         try writeSlotFile(from: encoded, to: slotURL(asset.id), sourceURL: asset.sourceURL)
 
-        let paths = Self.desktopEntryPaths(index)
+        let paths = Self.wallpaperEntryPaths(index)
         if !FileManager.default.fileExists(atPath: backupURL.path) {
-            // 데스크탑 자리가 있는 칸을 통째로 백업 → 끌 때 그대로 되돌린다
+            // 데스크탑/화면 보호기 자리가 있는 칸을 통째로 백업 → 끌 때 그대로 되돌린다
             let entries: [[String: Any]] = paths.compactMap { path in
                 Self.value(index, path).map { ["path": path, "entry": $0] }
             }
@@ -76,15 +77,33 @@ nonisolated struct LockScreenSlot: Sendable {
         }
 
         // 잠금화면은 데스크탑 선택으로 그려진다(검증됨). 모든 데스크탑 자리를 이 Aerial 로 바꾼다.
-        // (Idle = 화면 보호기는 건드리지 않는다)
+        // 화면 보호기(Idle)는 screenSaver 일 때만 바꾸고, 아니면 백업해 둔 원래 설정을 유지한다.
         let config = try PropertyListSerialization.data(
             fromPropertyList: ["assetID": asset.id], format: .binary, options: 0)
         let choice: [String: Any] = ["Provider": Self.aerialsProvider, "Configuration": config, "Files": [Any]()]
+        let original = backupEntries()
         for path in paths {
-            guard var entry = Self.value(index, path) as? [String: Any],
-                var list = Self.desktopChoices(entry), !list.isEmpty else { continue }
-            list[0] = choice
-            Self.setDesktopChoices(&entry, list)
+            guard var entry = Self.value(index, path) as? [String: Any] else { continue }
+            if let linked = entry["Linked"] as? [String: Any] {
+                if screenSaver {
+                    entry["Linked"] = Self.withChoice(linked, choice)
+                } else {
+                    // 묶음 모양은 데스크탑과 화면 보호기를 함께 바꾸므로, 둘로 나눠 화면 보호기에는 원래 설정을 남긴다
+                    entry["Linked"] = nil
+                    entry["Type"] = "individual"
+                    entry["Desktop"] = Self.withChoice(linked, choice)
+                    entry["Idle"] = linked
+                }
+            } else {
+                if let desktop = entry["Desktop"] as? [String: Any] { entry["Desktop"] = Self.withChoice(desktop, choice) }
+                if let idle = entry["Idle"] as? [String: Any] {
+                    if screenSaver {
+                        entry["Idle"] = Self.withChoice(idle, choice)
+                    } else if let orig = original[path], let origIdle = (orig["Idle"] ?? orig["Linked"]) as? [String: Any] {
+                        entry["Idle"] = origIdle
+                    }
+                }
+            }
             Self.setValue(&index, path, entry)
         }
         try writeIndex(index)
@@ -128,6 +147,19 @@ nonisolated struct LockScreenSlot: Sendable {
     }
 
     func discardBackup() { try? FileManager.default.removeItem(at: backupURL) }
+
+    /// 백업된 칸: 경로 → 원래 칸 내용
+    private func backupEntries() -> [[String]: [String: Any]] {
+        guard let data = try? Data(contentsOf: backupURL),
+            let backup = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any],
+            let entries = backup["entries"] as? [[String: Any]]
+        else { return [:] }
+        var map: [[String]: [String: Any]] = [:]
+        for item in entries {
+            if let path = item["path"] as? [String], let entry = item["entry"] as? [String: Any] { map[path] = entry }
+        }
+        return map
+    }
 
     // MARK: - status
 
@@ -213,6 +245,31 @@ nonisolated struct LockScreenSlot: Sendable {
 
     /// 데스크탑 자리가 있는 칸의 경로. 구체적인 것(디스플레이별)부터.
     static func desktopEntryPaths(_ index: [String: Any]) -> [[String]] {
+        candidatePaths(index).filter { path in
+            guard let entry = value(index, path) as? [String: Any], let list = desktopChoices(entry) else { return false }
+            return !list.isEmpty
+        }
+    }
+
+    /// 데스크탑 또는 화면 보호기 자리가 있는 칸의 경로 (백업·적용 대상)
+    static func wallpaperEntryPaths(_ index: [String: Any]) -> [[String]] {
+        candidatePaths(index).filter { path in
+            guard let entry = value(index, path) as? [String: Any] else { return false }
+            return entry["Linked"] is [String: Any] || entry["Desktop"] is [String: Any] || entry["Idle"] is [String: Any]
+        }
+    }
+
+    private static func withChoice(_ slot: [String: Any], _ choice: [String: Any]) -> [String: Any] {
+        var slot = slot
+        var content = slot["Content"] as? [String: Any] ?? [:]
+        var list = content["Choices"] as? [Any] ?? []
+        if list.isEmpty { list = [choice] } else { list[0] = choice }
+        content["Choices"] = list
+        slot["Content"] = content
+        return slot
+    }
+
+    private static func candidatePaths(_ index: [String: Any]) -> [[String]] {
         var paths: [[String]] = []
         if let displays = index["Displays"] as? [String: Any] {
             paths += displays.keys.sorted().map { ["Displays", $0] }
@@ -227,10 +284,7 @@ nonisolated struct LockScreenSlot: Sendable {
             }
         }
         paths += indexKeys.map { [$0] }
-        return paths.filter { path in
-            guard let entry = value(index, path) as? [String: Any], let list = desktopChoices(entry) else { return false }
-            return !list.isEmpty
-        }
+        return paths
     }
 
     private static func desktopKey(_ entry: [String: Any]) -> String? {
@@ -241,14 +295,6 @@ nonisolated struct LockScreenSlot: Sendable {
         guard let key = desktopKey(entry), let slot = entry[key] as? [String: Any],
             let content = slot["Content"] as? [String: Any] else { return nil }
         return content["Choices"] as? [Any]
-    }
-
-    private static func setDesktopChoices(_ entry: inout [String: Any], _ list: [Any]) {
-        guard let key = desktopKey(entry), var slot = entry[key] as? [String: Any],
-            var content = slot["Content"] as? [String: Any] else { return }
-        content["Choices"] = list
-        slot["Content"] = content
-        entry[key] = slot
     }
 
     private static func value(_ dict: [String: Any], _ path: [String]) -> Any? {

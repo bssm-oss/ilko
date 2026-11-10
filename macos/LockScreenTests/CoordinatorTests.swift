@@ -138,6 +138,25 @@ func coordinatorTests() async {
         expect(e.coord.selectedAssetID == cA, "A accepted")
     }
 
+    // 화면 보호기 토글: 켜면 Idle 도 Aerial, 끄면 원래대로. 설정은 저장된다
+    await test("testScreenSaverToggleReappliesIdle") {
+        let e = try CoordEnv()
+        let a = try await e.video("a.mov", seconds: 0.3)
+        e.coord.setEnabled(true)
+        e.coord.videoApplied(path: a)
+        await e.coord.settle()
+        let original = try idleChoiceIDs(e.index)
+        expect(!original.contains(cC), "screen saver off by default: \(original)")
+        e.coord.setScreenSaverEnabled(true)
+        await e.coord.settle()
+        expect(e.coord.screenSaverEnabled, "flag on")
+        expect(try idleChoiceIDs(e.index).allSatisfy { $0 == cC }, "idle → slot: \(try idleChoiceIDs(e.index))")
+        e.coord.setScreenSaverEnabled(false)
+        await e.coord.settle()
+        expect(try idleChoiceIDs(e.index) == original, "idle back: \(try idleChoiceIDs(e.index))")
+        expect(e.slot.currentSelectedAssetID() == cC, "lock screen still applied")
+    }
+
     // 프로필 저장 시 변환: 끝날 때까지 기다리고, 시스템 배경은 건드리지 않는다
     await test("testConvertForProfileWaitsWithoutApplying") {
         let e = try CoordEnv()

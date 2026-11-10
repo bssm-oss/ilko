@@ -208,6 +208,13 @@ struct LockScreenSettingsSection: View {
                 .padding(8)
                 .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
             }
+            if lockScreen.isEnabled {
+                SettingRow(title: L.lockScreenSaver) {
+                    Toggle("", isOn: Binding(get: { lockScreen.screenSaverEnabled },
+                                             set: { lockScreen.setScreenSaverEnabled($0) }))
+                        .toggleStyle(.switch)
+                }
+            }
             if lockScreen.isEnabled, let catalog = lockScreen.catalog {
                 Text(L.lockScreenSlot).font(.subheadline).fontWeight(.semibold)
                 Text(L.lockScreenSlotHint).font(.caption).foregroundStyle(.secondary)

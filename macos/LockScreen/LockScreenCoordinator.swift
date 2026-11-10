@@ -11,7 +11,9 @@ private actor SlotWriter {
     let slot: LockScreenSlot
     init(_ slot: LockScreenSlot) { self.slot = slot }
 
-    func apply(_ encoded: URL, _ asset: AerialAsset) throws { try slot.apply(encoded: encoded, asset: asset) }
+    func apply(_ encoded: URL, _ asset: AerialAsset, screenSaver: Bool) throws {
+        try slot.apply(encoded: encoded, asset: asset, screenSaver: screenSaver)
+    }
     func release(_ id: String) { try? slot.releaseSlotFile(assetID: id) }
     func status(_ encoded: URL, _ asset: AerialAsset) -> SlotStatus { slot.status(encoded: encoded, asset: asset) }
 
@@ -40,6 +42,7 @@ final class LockScreenCoordinator: ObservableObject {
     nonisolated static let changedNotification = "com.live.wallpaper.lockScreenChanged"
     static let enabledKey = "lockscreen_enabled"
     static let assetKey = "lockscreen_asset_id"
+    static let screenSaverKey = "lockscreen_screensaver"
 
     @Published private(set) var isEncoding = false
     /// 변환 중인 영상 경로 → 진행률(0~1)
@@ -48,6 +51,8 @@ final class LockScreenCoordinator: ObservableObject {
     @Published var notice: LockScreenNotice?
     @Published private(set) var isEnabled: Bool
     @Published private(set) var selectedAssetID: String?
+    /// 화면 보호기에도 같은 영상 (기본 꺼짐)
+    @Published private(set) var screenSaverEnabled: Bool
 
     let catalog: AerialCatalog?
     private let slot: LockScreenSlot
@@ -79,6 +84,7 @@ final class LockScreenCoordinator: ObservableObject {
         isSupported = catalog != nil && (try? slot.validateIndexFormat()) != nil
         isEnabled = defaults.bool(forKey: Self.enabledKey)
         selectedAssetID = defaults.string(forKey: Self.assetKey)
+        screenSaverEnabled = defaults.bool(forKey: Self.screenSaverKey)
         if !isSupported && isEnabled { persistEnabled(false) }
 
         Task { [weak self] in
@@ -157,6 +163,14 @@ final class LockScreenCoordinator: ObservableObject {
         }
     }
 
+    /// 화면 보호기 토글: 저장하고, 잠금화면이 적용 중이면 바로 다시 적용한다(변환은 캐시 사용)
+    func setScreenSaverEnabled(_ on: Bool) {
+        guard on != screenSaverEnabled else { return }
+        screenSaverEnabled = on
+        store.set(on, forKey: Self.screenSaverKey)
+        if isEnabled, let path = lastVideoPath { schedule(path) }
+    }
+
     func selectSlot(_ assetID: String) {
         guard assetID != selectedAssetID, assetID != excludedAssetID else { return }
         let old = selectedAssetID
@@ -219,13 +233,13 @@ final class LockScreenCoordinator: ObservableObject {
             print("[LockScreen] ⚠️ 슬롯 미선택")
             return
         }
-        let encoder = self.encoder, writer = self.writer
+        let encoder = self.encoder, writer = self.writer, screenSaver = screenSaverEnabled
         startJob { [weak self] gen in
             do {
                 let encoded = try await encoder.encode(source: URL(fileURLWithPath: path))
                 // 변환 중 다른 요청이 들어왔거나 기능이 꺼졌으면 적용하지 않는다(최신 요청만)
                 guard let self, self.isCurrent(gen), self.isEnabled, self.lastVideoPath == path else { return }
-                try await writer.apply(encoded, asset)
+                try await writer.apply(encoded, asset, screenSaver: screenSaver)
                 if self.isCurrent(gen) { self.appliedAssetID = asset.id }
                 print("[LockScreen] ✅ 잠금화면 영상 적용: \(asset.name)")
             } catch {

@@ -78,6 +78,25 @@ func desktopChoices(_ url: URL) throws -> [(provider: String?, asset: String?)] 
     }
 }
 
+/// Index 안의 모든 화면 보호기 선택(Linked 또는 Idle)의 assetID (Aerial 아니면 provider 이름)
+func idleChoiceIDs(_ url: URL) throws -> [String] {
+    let idx = try readIndex(url)
+    var entries: [[String: Any]] = []
+    for k in ["AllSpacesAndDisplays", "SystemDefault"] { if let e = idx[k] as? [String: Any] { entries.append(e) } }
+    if let d = idx["Displays"] as? [String: Any] { entries += d.values.compactMap { $0 as? [String: Any] } }
+    if let sp = idx["Spaces"] as? [String: Any] {
+        for case let space as [String: Any] in sp.values {
+            if let e = space["Default"] as? [String: Any] { entries.append(e) }
+            if let d = space["Displays"] as? [String: Any] { entries += d.values.compactMap { $0 as? [String: Any] } }
+        }
+    }
+    return entries.compactMap { e in
+        guard let slot = (e["Linked"] ?? e["Idle"]) as? [String: Any],
+            let c = ((slot["Content"] as? [String: Any])?["Choices"] as? [[String: Any]])?.first else { return nil }
+        return assetID(of: c) ?? (c["Provider"] as? String ?? "?")
+    }
+}
+
 func slotTests() async {
     func env() throws -> (slot: LockScreenSlot, proc: CountingProcesses, dir: URL, index: URL, encoded: URL) {
         let dir = makeTempDir()
@@ -99,7 +118,7 @@ func slotTests() async {
 
     await test("testApplyWritesSlotXattrAndIndex") {
         let e = try env()
-        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
         let slotFile = e.dir.appendingPathComponent("videos/AAAA.mov")
         expect(try Data(contentsOf: slotFile) == Data(contentsOf: e.encoded), "slot bytes == encoded")
         expect(xattrString(slotFile, "SourceURL") == A.sourceURL.absoluteString, "SourceURL xattr")
@@ -116,7 +135,7 @@ func slotTests() async {
     await test("testRestoreRevertsChoicesAndDeletesSlot") {
         let e = try env()
         let original = try readIndex(e.index)
-        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
         try e.slot.restore()
         let idx = try readIndex(e.index)
         for key in ["AllSpacesAndDisplays", "SystemDefault"] {
@@ -130,9 +149,9 @@ func slotTests() async {
     await test("testSecondApplyKeepsOriginalBackup") {
         let e = try env()
         let original = try readIndex(e.index)
-        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
         try e.slot.releaseSlotFile(assetID: "AAAA")
-        try e.slot.apply(encoded: e.encoded, asset: B)
+        try e.slot.apply(encoded: e.encoded, asset: B, screenSaver: true)
         try e.slot.restore()
         let idx = try readIndex(e.index)
         expect(choice0(idx, "AllSpacesAndDisplays")["Provider"] as? String
@@ -142,11 +161,11 @@ func slotTests() async {
 
     await test("testStatus") {
         let e = try env()
-        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
         expect(e.slot.status(encoded: e.encoded, asset: A) == .intact, "intact")
         try FileManager.default.removeItem(at: e.dir.appendingPathComponent("videos/AAAA.mov"))
         expect(e.slot.status(encoded: e.encoded, asset: A) == .fileMissingOrReplaced, "missing")
-        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
         try Data([9, 9, 9]).write(to: e.dir.appendingPathComponent("videos/AAAA.mov"))
         expect(e.slot.status(encoded: e.encoded, asset: A) == .fileMissingOrReplaced, "replaced")
         expect(e.slot.status(encoded: e.encoded, asset: B) == .selectionChangedByUser, "other asset selected")
@@ -156,7 +175,7 @@ func slotTests() async {
         let e = try env()
         try PropertyListSerialization.data(fromPropertyList: ["Something": 1], format: .binary, options: 0).write(to: e.index)
         do {
-            try e.slot.apply(encoded: e.encoded, asset: A)
+            try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
             expect(false, "should throw")
         } catch let err as LockScreenError {
             if case .unsupportedFormat = err {} else { expect(false, "wrong error \(err)") }
@@ -167,7 +186,7 @@ func slotTests() async {
 
     await test("testReleaseSlotFileLeavesPlaceholder") {
         let e = try env()
-        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
         try e.slot.releaseSlotFile(assetID: "AAAA")
         expectPlaceholder(e.dir.appendingPathComponent("videos/AAAA.mov"))
         try e.slot.releaseSlotFile(assetID: "ZZZZ")  // 없는 슬롯은 만들지 않음
@@ -218,6 +237,53 @@ func slotTests() async {
         desk["Content"] = content; d1["Desktop"] = desk; displays["D1"] = d1; idx["Displays"] = displays
         try PropertyListSerialization.data(fromPropertyList: idx, format: .binary, options: 0).write(to: e.index)
         expect(e.slot.status(encoded: e.encoded, asset: A) == .selectionChangedByUser, "user change detected")
+    }
+
+    // 화면 보호기 토글 켜짐: 분리 모양의 모든 Idle 칸도 같은 Aerial
+    await test("testApplySplitWithScreenSaverSetsEveryIdle") {
+        let e = try env()
+        try writeSplitIndex(e.index)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
+        let idles = try idleChoiceIDs(e.index)
+        expect(idles.count == 5 && idles.allSatisfy { $0 == "AAAA" }, "all idle → A: \(idles)")
+        expect(try desktopChoices(e.index).allSatisfy { $0.asset == "AAAA" }, "desktops → A")
+    }
+
+    // 화면 보호기 토글을 다시 끄면 Idle 은 원래대로
+    await test("testApplySplitScreenSaverOffRestoresOriginalIdle") {
+        let e = try env()
+        try writeSplitIndex(e.index)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: false)
+        let idles = try idleChoiceIDs(e.index)
+        expect(idles.count == 5 && idles.allSatisfy { $0 == "IDLE" }, "idle back to original: \(idles)")
+        expect(try desktopChoices(e.index).allSatisfy { $0.asset == "AAAA" }, "desktops still A")
+    }
+
+    // 묶음 모양 + 화면 보호기 꺼짐: 잠금화면만 바꾸도록 칸을 나누고, 끄면 원래 묶음으로 복원
+    await test("testApplyLinkedScreenSaverOffSplitsAndRestores") {
+        let e = try env()
+        let before = try readIndex(e.index)
+        let originalProvider = choice0(before, "SystemDefault")["Provider"] as? String
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: false)
+        let after = try readIndex(e.index)
+        for key in ["AllSpacesAndDisplays", "SystemDefault"] {
+            let entry = after[key] as! [String: Any]
+            expect(entry["Linked"] == nil && entry["Type"] as? String == "individual", "\(key) split")
+        }
+        expect(try desktopChoices(e.index).allSatisfy { $0.asset == "AAAA" }, "desktops → A")
+        expect(try idleChoiceIDs(e.index).allSatisfy { $0 == originalProvider }, "idle keeps original \(originalProvider ?? "")")
+        expect(e.slot.status(encoded: e.encoded, asset: A) == .intact, "intact")
+        try e.slot.restore()
+        expect(NSDictionary(dictionary: try readIndex(e.index)).isEqual(to: before), "restored exactly")
+    }
+
+    await test("testApplyLinkedScreenSaverOnKeepsLinked") {
+        let e = try env()
+        try e.slot.apply(encoded: e.encoded, asset: A, screenSaver: true)
+        let after = try readIndex(e.index)
+        expect((after["SystemDefault"] as! [String: Any])["Linked"] != nil, "stays linked")
+        expect(try idleChoiceIDs(e.index).allSatisfy { $0 == "AAAA" }, "idle (linked) → A")
     }
 
     await test("testOriginalAssetIDFromBackup") {
