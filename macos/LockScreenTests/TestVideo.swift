@@ -23,26 +23,8 @@ func makeTestVideo(url: URL, size: CGSize, fps: Int32, seconds: Double, barHeigh
     }
     writer.startWriting(); writer.startSession(atSourceTime: .zero)
 
-    let frames = Int(Double(fps) * seconds)
-    for i in 0..<frames {
-        while !vin.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
-        var pb: CVPixelBuffer?
-        CVPixelBufferPoolCreatePixelBuffer(nil, ad.pixelBufferPool!, &pb)
-        CVPixelBufferLockBaseAddress(pb!, [])
-        let base = CVPixelBufferGetBaseAddress(pb!)!.assumingMemoryBound(to: UInt8.self)
-        let bpr = CVPixelBufferGetBytesPerRow(pb!)
-        for y in 0..<h {
-            let dark = y < barHeight || y >= h - barHeight
-            for x in 0..<w {
-                let p = base + y * bpr + x * 4
-                p[0] = dark ? 0 : 60; p[1] = dark ? 0 : 160; p[2] = dark ? 0 : 220; p[3] = 255
-            }
-        }
-        CVPixelBufferUnlockBaseAddress(pb!, [])
-        ad.append(pb!, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: fps))
-    }
-    vin.markAsFinished()
-
+    // 오디오(한 버퍼로 전체 길이)를 먼저 넣어야 한다. 영상을 다 쓴 뒤 넣으면
+    // AVAssetWriter 가 인터리빙을 위해 오디오를 기다리며 영상 입력을 막아 교착된다.
     if let a = ain {
         // 무음 PCM 을 AAC 로
         var fmt = AudioStreamBasicDescription(mSampleRate: 44100, mFormatID: kAudioFormatLinearPCM,
@@ -62,6 +44,25 @@ func makeTestVideo(url: URL, size: CGSize, fps: Int32, seconds: Double, barHeigh
         while !a.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
         a.append(sb!); a.markAsFinished()
     }
+    let frames = Int(Double(fps) * seconds)
+    for i in 0..<frames {
+        while !vin.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 1_000_000) }
+        var pb: CVPixelBuffer?
+        CVPixelBufferPoolCreatePixelBuffer(nil, ad.pixelBufferPool!, &pb)
+        CVPixelBufferLockBaseAddress(pb!, [])
+        let base = CVPixelBufferGetBaseAddress(pb!)!.assumingMemoryBound(to: UInt8.self)
+        let bpr = CVPixelBufferGetBytesPerRow(pb!)
+        for y in 0..<h {
+            let dark = y < barHeight || y >= h - barHeight
+            for x in 0..<w {
+                let p = base + y * bpr + x * 4
+                p[0] = dark ? 0 : 60; p[1] = dark ? 0 : 160; p[2] = dark ? 0 : 220; p[3] = 255
+            }
+        }
+        CVPixelBufferUnlockBaseAddress(pb!, [])
+        ad.append(pb!, withPresentationTime: CMTime(value: CMTimeValue(i), timescale: fps))
+    }
+    vin.markAsFinished()
     await writer.finishWriting()
     if writer.status != .completed { throw writer.error ?? LockScreenError.io("test video") }
 }
