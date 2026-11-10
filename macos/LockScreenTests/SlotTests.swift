@@ -5,7 +5,7 @@ final class CountingProcesses: WallpaperProcessControlling, @unchecked Sendable 
     func restartWallpaperProcesses() { restarts += 1 }
 }
 
-private func readIndex(_ url: URL) throws -> [String: Any] {
+func readIndex(_ url: URL) throws -> [String: Any] {
     try PropertyListSerialization.propertyList(from: Data(contentsOf: url), options: .init(), format: nil) as! [String: Any]
 }
 
@@ -14,7 +14,7 @@ private func choice0(_ index: [String: Any], _ key: String) -> [String: Any] {
     return ((linked["Content"] as! [String: Any])["Choices"] as! [[String: Any]])[0]
 }
 
-private func assetID(of choice: [String: Any]) -> String? {
+func assetID(of choice: [String: Any]) -> String? {
     guard let data = choice["Configuration"] as? Data,
         let cfg = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any]
     else { return nil }
@@ -35,6 +35,47 @@ func expectPlaceholder(_ url: URL, file: String = #fileID, line: Int = #line) {
     let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? -1
     expect(size == 1, "placeholder size 1, got \(size)", file: file, line: line)
     expect(xattrString(url, "SourceURL") == nil, "placeholder has no SourceURL", file: file, line: line)
+}
+
+
+/// macOS 가 데스크탑/Idle 을 분리해 저장한 Index.plist (setDesktopImageURL 이후 실제 관찰된 모양)
+func writeSplitIndex(_ url: URL, idleAsset: String = "IDLE") throws {
+    func content(_ choice: [String: Any]) -> [String: Any] {
+        ["Content": ["Choices": [choice], "Shuffle": "$null", "EncodedOptionValues": Data([1, 2])],
+         "LastSet": Date(timeIntervalSince1970: 1), "LastUse": Date(timeIntervalSince1970: 2)]
+    }
+    let image: [String: Any] = ["Provider": "com.apple.wallpaper.choice.image", "Files": [Any](),
+                                "Configuration": Data("img".utf8)]
+    let idle: [String: Any] = ["Provider": "com.apple.wallpaper.choice.aerials", "Files": [Any](),
+                               "Configuration": try PropertyListSerialization.data(
+                                   fromPropertyList: ["assetID": idleAsset], format: .binary, options: 0)]
+    let individual: [String: Any] = ["Type": "individual", "Desktop": content(image), "Idle": content(idle)]
+    let index: [String: Any] = [
+        "AllSpacesAndDisplays": ["Type": "idle", "Idle": content(idle)],
+        "SystemDefault": individual,
+        "Spaces": ["": ["Default": individual, "Displays": ["D1": individual]]],
+        "Displays": ["D1": individual],
+    ]
+    try PropertyListSerialization.data(fromPropertyList: index, format: .binary, options: 0).write(to: url)
+}
+
+/// Index 안의 모든 데스크탑 선택(Linked 또는 Desktop)의 Provider/assetID
+func desktopChoices(_ url: URL) throws -> [(provider: String?, asset: String?)] {
+    let idx = try readIndex(url)
+    var entries: [[String: Any]] = []
+    for k in ["AllSpacesAndDisplays", "SystemDefault"] { if let e = idx[k] as? [String: Any] { entries.append(e) } }
+    if let d = idx["Displays"] as? [String: Any] { entries += d.values.compactMap { $0 as? [String: Any] } }
+    if let sp = idx["Spaces"] as? [String: Any] {
+        for case let space as [String: Any] in sp.values {
+            if let e = space["Default"] as? [String: Any] { entries.append(e) }
+            if let d = space["Displays"] as? [String: Any] { entries += d.values.compactMap { $0 as? [String: Any] } }
+        }
+    }
+    return entries.compactMap { e in
+        guard let slot = (e["Linked"] ?? e["Desktop"]) as? [String: Any],
+            let c = ((slot["Content"] as? [String: Any])?["Choices"] as? [[String: Any]])?.first else { return nil }
+        return (c["Provider"] as? String, assetID(of: c))
+    }
 }
 
 func slotTests() async {
@@ -131,6 +172,52 @@ func slotTests() async {
         expectPlaceholder(e.dir.appendingPathComponent("videos/AAAA.mov"))
         try e.slot.releaseSlotFile(assetID: "ZZZZ")  // 없는 슬롯은 만들지 않음
         expect(!FileManager.default.fileExists(atPath: e.dir.appendingPathComponent("videos/ZZZZ.mov").path), "no file created")
+    }
+
+    // 데스크탑/Idle 분리 모양: 모든 데스크탑 자리를 Aerial 로, Idle(화면 보호기)은 그대로
+    await test("testApplySplitFormatSetsEveryDesktop") {
+        let e = try env()
+        try writeSplitIndex(e.index)
+        let before = try readIndex(e.index)
+        try e.slot.validateIndexFormat()
+        try e.slot.apply(encoded: e.encoded, asset: A)
+        let desks = try desktopChoices(e.index)
+        expect(desks.count == 4, "4 desktop entries, got \(desks.count)")
+        expect(desks.allSatisfy { $0.provider == "com.apple.wallpaper.choice.aerials" && $0.asset == "AAAA" }, "all desktops → A: \(desks)")
+        let after = try readIndex(e.index)
+        let idleBefore = (before["SystemDefault"] as! [String: Any])["Idle"] as! [String: Any]
+        let idleAfter = (after["SystemDefault"] as! [String: Any])["Idle"] as! [String: Any]
+        expect(NSDictionary(dictionary: idleBefore).isEqual(to: idleAfter), "Idle untouched")
+        expect(NSDictionary(dictionary: before["AllSpacesAndDisplays"] as! [String: Any])
+               .isEqual(to: after["AllSpacesAndDisplays"] as! [String: Any]), "idle-only entry untouched")
+        expect(e.slot.currentSelectedAssetID() == "AAAA", "current A")
+        expect(e.slot.status(encoded: e.encoded, asset: A) == .intact, "intact")
+    }
+
+    await test("testRestoreSplitFormatRestoresExactly") {
+        let e = try env()
+        try writeSplitIndex(e.index)
+        let before = try readIndex(e.index)
+        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.restore()
+        expect(NSDictionary(dictionary: try readIndex(e.index)).isEqual(to: before), "index restored exactly")
+        expectPlaceholder(e.dir.appendingPathComponent("videos/AAAA.mov"))
+    }
+
+    // 사용자가 한 디스플레이라도 다른 배경으로 바꾸면 사용자 변경으로 본다
+    await test("testStatusSplitDetectsUserChangeOnOneDisplay") {
+        let e = try env()
+        try writeSplitIndex(e.index)
+        try e.slot.apply(encoded: e.encoded, asset: A)
+        var idx = try readIndex(e.index)
+        var displays = idx["Displays"] as! [String: Any]
+        var d1 = displays["D1"] as! [String: Any]
+        var desk = d1["Desktop"] as! [String: Any]
+        var content = desk["Content"] as! [String: Any]
+        content["Choices"] = [["Provider": "com.apple.wallpaper.choice.image", "Files": [Any](), "Configuration": Data("x".utf8)]]
+        desk["Content"] = content; d1["Desktop"] = desk; displays["D1"] = d1; idx["Displays"] = displays
+        try PropertyListSerialization.data(fromPropertyList: idx, format: .binary, options: 0).write(to: e.index)
+        expect(e.slot.status(encoded: e.encoded, asset: A) == .selectionChangedByUser, "user change detected")
     }
 
     await test("testOriginalAssetIDFromBackup") {

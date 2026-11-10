@@ -63,21 +63,29 @@ nonisolated struct LockScreenSlot: Sendable {
 
         try writeSlotFile(from: encoded, to: slotURL(asset.id), sourceURL: asset.sourceURL)
 
+        let paths = Self.desktopEntryPaths(index)
         if !FileManager.default.fileExists(atPath: backupURL.path) {
-            var backup: [String: Any] = [:]
-            for key in Self.indexKeys { backup[key] = try choices(index, key) }
+            // 데스크탑 자리가 있는 칸을 통째로 백업 → 끌 때 그대로 되돌린다
+            let entries: [[String: Any]] = paths.compactMap { path in
+                Self.value(index, path).map { ["path": path, "entry": $0] }
+            }
             try FileManager.default.createDirectory(at: backupURL.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
-            try PropertyListSerialization.data(fromPropertyList: backup, format: .binary, options: 0)
+            try PropertyListSerialization.data(fromPropertyList: ["entries": entries], format: .binary, options: 0)
                 .write(to: backupURL, options: .atomic)
         }
 
+        // 잠금화면은 데스크탑 선택으로 그려진다(검증됨). 모든 데스크탑 자리를 이 Aerial 로 바꾼다.
+        // (Idle = 화면 보호기는 건드리지 않는다)
         let config = try PropertyListSerialization.data(
             fromPropertyList: ["assetID": asset.id], format: .binary, options: 0)
-        for key in Self.indexKeys {
-            var list = try choices(index, key)
-            list[0] = ["Provider": Self.aerialsProvider, "Configuration": config, "Files": [Any]()]
-            try setChoices(&index, key, list)
+        let choice: [String: Any] = ["Provider": Self.aerialsProvider, "Configuration": config, "Files": [Any]()]
+        for path in paths {
+            guard var entry = Self.value(index, path) as? [String: Any],
+                var list = Self.desktopChoices(entry), !list.isEmpty else { continue }
+            list[0] = choice
+            Self.setDesktopChoices(&entry, list)
+            Self.setValue(&index, path, entry)
         }
         try writeIndex(index)
         processes.restartWallpaperProcesses()
@@ -96,9 +104,10 @@ nonisolated struct LockScreenSlot: Sendable {
     func originalAssetID() -> String? {
         guard let data = try? Data(contentsOf: backupURL),
             let backup = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any],
-            let list = backup["AllSpacesAndDisplays"] as? [Any]
+            let entries = backup["entries"] as? [[String: Any]]
         else { return nil }
-        return assetID(ofChoice: list.first)
+        let first = entries.lazy.compactMap { ($0["entry"] as? [String: Any]).flatMap(Self.desktopChoices)?.first }.first
+        return assetID(ofChoice: first)
     }
 
     /// 슬롯 해제(placeholder) + 백업해 둔 원래 Choices 복원.
@@ -106,9 +115,11 @@ nonisolated struct LockScreenSlot: Sendable {
         var index = try readIndex()
         if let id = currentAssetID(index) { try releaseSlotFile(assetID: id) }
         if let data = try? Data(contentsOf: backupURL),
-            let backup = try PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any] {
-            for key in Self.indexKeys {
-                if let list = backup[key] as? [Any] { try setChoices(&index, key, list) }
+            let backup = try PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any],
+            let entries = backup["entries"] as? [[String: Any]] {
+            for item in entries {
+                guard let path = item["path"] as? [String], let entry = item["entry"] else { continue }
+                Self.setValue(&index, path, entry)
             }
             try writeIndex(index)
         }
@@ -121,7 +132,12 @@ nonisolated struct LockScreenSlot: Sendable {
     // MARK: - status
 
     func status(encoded: URL, asset: AerialAsset) -> SlotStatus {
-        guard let index = try? readIndex(), currentAssetID(index) == asset.id else { return .selectionChangedByUser }
+        // 데스크탑 자리 중 하나라도 이 Aerial 이 아니면 사용자가 바꾼 것
+        guard let index = try? readIndex() else { return .selectionChangedByUser }
+        let ids = Self.desktopEntryPaths(index).map { path in
+            (Self.value(index, path) as? [String: Any]).flatMap(Self.desktopChoices).flatMap { assetID(ofChoice: $0.first) }
+        }
+        guard !ids.isEmpty, ids.allSatisfy({ $0 == asset.id }) else { return .selectionChangedByUser }
         let slot = slotURL(asset.id)
         let fm = FileManager.default
         guard let a = try? fm.attributesOfItem(atPath: slot.path)[.size] as? Int,
@@ -138,8 +154,11 @@ nonisolated struct LockScreenSlot: Sendable {
 
     // MARK: - 내부
 
+    /// 가장 구체적인(디스플레이별) 데스크탑 자리의 assetID (Aerial 이 아니면 nil)
     private func currentAssetID(_ index: [String: Any]) -> String? {
-        assetID(ofChoice: (try? choices(index, "AllSpacesAndDisplays"))?.first)
+        guard let path = Self.desktopEntryPaths(index).first,
+            let entry = Self.value(index, path) as? [String: Any] else { return nil }
+        return assetID(ofChoice: Self.desktopChoices(entry)?.first)
     }
 
     private func assetID(ofChoice choice: Any?) -> String? {
@@ -183,28 +202,70 @@ nonisolated struct LockScreenSlot: Sendable {
     }
 
     private func validate(_ index: [String: Any]) throws {
-        for key in Self.indexKeys {
-            guard let list = try? choices(index, key), !list.isEmpty else {
-                throw LockScreenError.unsupportedFormat("Index.plist missing \(key).Linked.Content.Choices")
-            }
+        guard !Self.desktopEntryPaths(index).isEmpty else {
+            throw LockScreenError.unsupportedFormat("Index.plist has no desktop wallpaper entry")
         }
     }
 
-    private func choices(_ index: [String: Any], _ key: String) throws -> [Any] {
-        guard let top = index[key] as? [String: Any], let linked = top["Linked"] as? [String: Any],
-            let content = linked["Content"] as? [String: Any], let list = content["Choices"] as? [Any]
-        else { throw LockScreenError.unsupportedFormat("no \(key) choices") }
-        return list
+    // MARK: Index.plist 구조
+    // 각 칸(AllSpacesAndDisplays, SystemDefault, Displays/<id>, Spaces/<id>/Default, Spaces/<id>/Displays/<id>)은
+    // 묶음(`Linked`) 또는 분리(`Desktop` + `Idle`) 모양이다. 데스크탑 자리 = `Linked` 또는 `Desktop`.
+
+    /// 데스크탑 자리가 있는 칸의 경로. 구체적인 것(디스플레이별)부터.
+    static func desktopEntryPaths(_ index: [String: Any]) -> [[String]] {
+        var paths: [[String]] = []
+        if let displays = index["Displays"] as? [String: Any] {
+            paths += displays.keys.sorted().map { ["Displays", $0] }
+        }
+        if let spaces = index["Spaces"] as? [String: Any] {
+            for sid in spaces.keys.sorted() {
+                guard let space = spaces[sid] as? [String: Any] else { continue }
+                if let displays = space["Displays"] as? [String: Any] {
+                    paths += displays.keys.sorted().map { ["Spaces", sid, "Displays", $0] }
+                }
+                paths.append(["Spaces", sid, "Default"])
+            }
+        }
+        paths += indexKeys.map { [$0] }
+        return paths.filter { path in
+            guard let entry = value(index, path) as? [String: Any], let list = desktopChoices(entry) else { return false }
+            return !list.isEmpty
+        }
     }
 
-    private func setChoices(_ index: inout [String: Any], _ key: String, _ list: [Any]) throws {
-        guard var top = index[key] as? [String: Any], var linked = top["Linked"] as? [String: Any],
-            var content = linked["Content"] as? [String: Any]
-        else { throw LockScreenError.unsupportedFormat("no \(key) content") }
+    private static func desktopKey(_ entry: [String: Any]) -> String? {
+        entry["Linked"] is [String: Any] ? "Linked" : entry["Desktop"] is [String: Any] ? "Desktop" : nil
+    }
+
+    static func desktopChoices(_ entry: [String: Any]) -> [Any]? {
+        guard let key = desktopKey(entry), let slot = entry[key] as? [String: Any],
+            let content = slot["Content"] as? [String: Any] else { return nil }
+        return content["Choices"] as? [Any]
+    }
+
+    private static func setDesktopChoices(_ entry: inout [String: Any], _ list: [Any]) {
+        guard let key = desktopKey(entry), var slot = entry[key] as? [String: Any],
+            var content = slot["Content"] as? [String: Any] else { return }
         content["Choices"] = list
-        linked["Content"] = content
-        top["Linked"] = linked
-        index[key] = top
+        slot["Content"] = content
+        entry[key] = slot
+    }
+
+    private static func value(_ dict: [String: Any], _ path: [String]) -> Any? {
+        guard let head = path.first else { return dict }
+        guard let next = dict[head] else { return nil }
+        if path.count == 1 { return next }
+        guard let sub = next as? [String: Any] else { return nil }
+        return value(sub, Array(path.dropFirst()))
+    }
+
+    /// 경로의 중간 칸이 없으면 아무것도 하지 않는다(그 사이 디스플레이가 사라진 경우 등)
+    private static func setValue(_ dict: inout [String: Any], _ path: [String], _ newValue: Any) {
+        guard let head = path.first else { return }
+        if path.count == 1 { dict[head] = newValue; return }
+        guard var sub = dict[head] as? [String: Any] else { return }
+        setValue(&sub, Array(path.dropFirst()), newValue)
+        dict[head] = sub
     }
 
     private static func digestPrefix(_ url: URL) -> String? {
