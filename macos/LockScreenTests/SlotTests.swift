@@ -29,6 +29,14 @@ private func xattrString(_ url: URL, _ name: String) -> String? {
     return String(decoding: buf, as: UTF8.self)
 }
 
+/// I6: 슬롯을 놓을 때 파일을 지우면 macOS 가 원본을 다시 받지 않는다.
+/// SourceURL 없는 1바이트 placeholder 를 남겨야 다음 사용 시 원본을 재다운로드한다.
+func expectPlaceholder(_ url: URL, file: String = #fileID, line: Int = #line) {
+    let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? -1
+    expect(size == 1, "placeholder size 1, got \(size)", file: file, line: line)
+    expect(xattrString(url, "SourceURL") == nil, "placeholder has no SourceURL", file: file, line: line)
+}
+
 func slotTests() async {
     func env() throws -> (slot: LockScreenSlot, proc: CountingProcesses, dir: URL, index: URL, encoded: URL) {
         let dir = makeTempDir()
@@ -73,7 +81,7 @@ func slotTests() async {
         for key in ["AllSpacesAndDisplays", "SystemDefault"] {
             expect(NSDictionary(dictionary: choice0(idx, key)).isEqual(to: choice0(original, key)), "\(key) restored")
         }
-        expect(!FileManager.default.fileExists(atPath: e.dir.appendingPathComponent("videos/AAAA.mov").path), "slot deleted")
+        expectPlaceholder(e.dir.appendingPathComponent("videos/AAAA.mov"))
         expect(!FileManager.default.fileExists(atPath: e.dir.appendingPathComponent("backup.plist").path), "backup removed")
         expect(e.proc.restarts == 2, "restarts 2, got \(e.proc.restarts)")
     }
@@ -82,13 +90,13 @@ func slotTests() async {
         let e = try env()
         let original = try readIndex(e.index)
         try e.slot.apply(encoded: e.encoded, asset: A)
-        try e.slot.removeSlotFile(assetID: "AAAA")
+        try e.slot.releaseSlotFile(assetID: "AAAA")
         try e.slot.apply(encoded: e.encoded, asset: B)
         try e.slot.restore()
         let idx = try readIndex(e.index)
         expect(choice0(idx, "AllSpacesAndDisplays")["Provider"] as? String
                == choice0(original, "AllSpacesAndDisplays")["Provider"] as? String, "back to original provider")
-        expect(!FileManager.default.fileExists(atPath: e.dir.appendingPathComponent("videos/BBBB.mov").path), "B slot deleted")
+        expectPlaceholder(e.dir.appendingPathComponent("videos/BBBB.mov"))
     }
 
     await test("testStatus") {
@@ -114,5 +122,24 @@ func slotTests() async {
         }
         expect(!FileManager.default.fileExists(atPath: e.dir.appendingPathComponent("videos/AAAA.mov").path), "no slot written")
         expect(e.proc.restarts == 0, "no restart")
+    }
+
+    await test("testReleaseSlotFileLeavesPlaceholder") {
+        let e = try env()
+        try e.slot.apply(encoded: e.encoded, asset: A)
+        try e.slot.releaseSlotFile(assetID: "AAAA")
+        expectPlaceholder(e.dir.appendingPathComponent("videos/AAAA.mov"))
+        try e.slot.releaseSlotFile(assetID: "ZZZZ")  // 없는 슬롯은 만들지 않음
+        expect(!FileManager.default.fileExists(atPath: e.dir.appendingPathComponent("videos/ZZZZ.mov").path), "no file created")
+    }
+
+    await test("testOriginalAssetIDFromBackup") {
+        let e = try env()
+        expect(e.slot.originalAssetID() == nil, "no backup → nil")
+        // 원래 선택이 Aerial B 였던 상태에서 A 를 적용
+        try e.slot.apply(encoded: e.encoded, asset: B)
+        e.slot.discardBackup()
+        try e.slot.apply(encoded: e.encoded, asset: A)
+        expect(e.slot.originalAssetID() == "BBBB", "original from backup, got \(e.slot.originalAssetID() ?? "nil")")
     }
 }

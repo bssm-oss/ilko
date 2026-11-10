@@ -83,15 +83,28 @@ nonisolated struct LockScreenSlot: Sendable {
         processes.restartWallpaperProcesses()
     }
 
-    func removeSlotFile(assetID: String) throws {
+    /// 슬롯을 놓는다. 파일을 지우면 macOS 가 그 Aerial 을 다시 받지 않으므로(검증됨),
+    /// SourceURL 없는 1바이트 placeholder 로 바꿔 다음 사용 시 원본 재다운로드를 유도한다.
+    func releaseSlotFile(assetID: String) throws {
         let url = slotURL(assetID)
-        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+        try Data([0]).write(to: url)
     }
 
-    /// 슬롯 파일 삭제 + 백업해 둔 원래 Choices 복원.
+    /// 기능을 켜기 전 사용자의 원래 Aerial (백업 기준, Aerial 이 아니었으면 nil)
+    func originalAssetID() -> String? {
+        guard let data = try? Data(contentsOf: backupURL),
+            let backup = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any],
+            let list = backup["AllSpacesAndDisplays"] as? [Any]
+        else { return nil }
+        return assetID(ofChoice: list.first)
+    }
+
+    /// 슬롯 해제(placeholder) + 백업해 둔 원래 Choices 복원.
     func restore() throws {
         var index = try readIndex()
-        if let id = currentAssetID(index) { try removeSlotFile(assetID: id) }
+        if let id = currentAssetID(index) { try releaseSlotFile(assetID: id) }
         if let data = try? Data(contentsOf: backupURL),
             let backup = try PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any] {
             for key in Self.indexKeys {
@@ -126,7 +139,11 @@ nonisolated struct LockScreenSlot: Sendable {
     // MARK: - 내부
 
     private func currentAssetID(_ index: [String: Any]) -> String? {
-        guard let c = (try? choices(index, "AllSpacesAndDisplays"))?.first as? [String: Any],
+        assetID(ofChoice: (try? choices(index, "AllSpacesAndDisplays"))?.first)
+    }
+
+    private func assetID(ofChoice choice: Any?) -> String? {
+        guard let c = choice as? [String: Any],
             c["Provider"] as? String == Self.aerialsProvider,
             let data = c["Configuration"] as? Data,
             let cfg = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any]

@@ -97,6 +97,4 @@ enum UserDefaultsKeys {
     static let rotation = "rotation"
     static let rdelay = "rdelay"
     static let rtype = "rtype"
-    static let lockScreenEnabled = "lockscreen_enabled"
-    static let lockScreenAssetID = "lockscreen_asset_id"
 }

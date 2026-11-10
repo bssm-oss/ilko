@@ -14,10 +14,11 @@ actor AerialEncoder {
     nonisolated static let outputFPS: Int32 = 240
     nonisolated static let maxCachedFiles = 5
     /// 인코딩 방식이 바뀌면 올려서 이전 캐시를 무효화한다.
-    nonisolated static let formatVersion = "v1"
+    nonisolated static let formatVersion = "v2"
 
     private let cacheDir: URL
-    private var inflight: [String: Task<URL, Error>] = [:]
+    /// 같은 원본에 대한 진행 중 변환 + 기다리는 호출자들. 대기자가 모두 취소되면 변환도 취소한다.
+    private var inflight: [String: (task: Task<URL, Error>, waiters: Set<UUID>)] = [:]
 
     init(cacheDir: URL = AerialEncoder.defaultCacheDir) {
         self.cacheDir = cacheDir
@@ -28,19 +29,40 @@ actor AerialEncoder {
         let key = try Self.cacheKey(for: source)
         let dest = cacheDir.appendingPathComponent("\(key).mov")
         if FileManager.default.fileExists(atPath: dest.path) { return dest }
-        if let running = inflight[key] { return try await running.value }
-
-        let dir = cacheDir
-        let task = Task.detached(priority: .utility) {
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            try await Self.transcode(source: source, to: dest)
-            return dest
+        let task: Task<URL, Error>
+        if let running = inflight[key] {
+            task = running.task
+        } else {
+            let dir = cacheDir
+            task = Task.detached(priority: .utility) {
+                try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                try await Self.transcode(source: source, to: dest)
+                return dest
+            }
+            inflight[key] = (task, [])
         }
-        inflight[key] = task
-        defer { inflight[key] = nil }
-        let result = try await task.value
+        let waiter = UUID()
+        inflight[key]?.waiters.insert(waiter)
+        defer { leave(key, waiter, cancelIfLast: false) }
+        // 호출자 취소는 detached 변환에 전파되지 않으므로 직접 전달한다
+        let result = try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            Task { await self.leave(key, waiter, cancelIfLast: true) }
+        }
         pruneCache(keeping: result)
         return result
+    }
+
+    private func leave(_ key: String, _ waiter: UUID, cancelIfLast: Bool) {
+        guard var entry = inflight[key], entry.waiters.contains(waiter) else { return }
+        entry.waiters.remove(waiter)
+        if entry.waiters.isEmpty {
+            if cancelIfLast { entry.task.cancel() }
+            inflight[key] = nil
+        } else {
+            inflight[key] = entry
+        }
     }
 
     /// 원본 내용 기반 캐시 키 (SHA-256 앞 16자 + 포맷 버전)
@@ -83,7 +105,14 @@ actor AerialEncoder {
         // 회전 반영한 표시 크기
         let oriented = CGRect(origin: .zero, size: natural).applying(transform)
         let orientedSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
-        let normalize = transform.concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
+        // preferredTransform 은 좌상단 원점 기준인데 CIImage 는 좌하단 원점이다.
+        // CI→좌상단(입력 높이로 y 반전) → 회전/정규화 → 좌상단→CI(출력 높이로 y 반전)
+        let flipIn = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: natural.height)
+        let flipOut = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: orientedSize.height)
+        let normalize = flipIn
+            .concatenating(transform)
+            .concatenating(CGAffineTransform(translationX: -oriented.minX, y: -oriented.minY))
+            .concatenating(flipOut)
 
         let content = try await contentRect(asset: asset, size: orientedSize)
         let outSize = outputSize(for: orientedSize)

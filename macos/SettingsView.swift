@@ -194,10 +194,10 @@ struct LockScreenSettingsSection: View {
             if !lockScreen.isSupported {
                 Text(L.lockScreenUnsupported).font(.caption).foregroundStyle(.secondary)
             }
-            if let notice = lockScreen.notice {
+            if lockScreen.notice == .systemWallpaperChanged {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
-                    Text(notice).font(.caption)
+                    Text(L.lockScreenDisabledNotice).font(.caption)
                     Spacer()
                     Button { lockScreen.notice = nil } label: { Image(systemName: "xmark") }
                         .buttonStyle(.plain)
@@ -210,8 +210,11 @@ struct LockScreenSettingsSection: View {
                 Text(L.lockScreenSlotHint).font(.caption).foregroundStyle(.secondary)
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        let excluded = lockScreen.excludedAssetID
                         ForEach(catalog.assets) { asset in
                             AerialSlotCell(asset: asset, selected: asset.id == lockScreen.selectedAssetID)
+                                // 사용자의 원래 Aerial 은 덮어쓸 수 없다
+                                .opacity(asset.id == excluded ? 0.35 : 1)
                                 .onTapGesture { lockScreen.selectSlot(asset.id) }
                         }
                     }

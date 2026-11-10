@@ -60,3 +60,52 @@ func encoderTests() async {
         expect(movs.count == 5, "cache pruned to 5, got \(movs.count)")
     }
 }
+
+func encoderReviewTests() async {
+    let work = makeTempDir()
+
+    // I1: 회전 메타데이터(아이폰 세로)가 있는 원본의 방향이 결과에서 유지되어야 한다
+    await test("testRotatedSourceKeepsOrientation") {
+        let src = work.appendingPathComponent("rotated.mov")
+        // 버퍼 640x360, 90° 회전 → 표시 360x640
+        try await makeTestVideo(url: src, size: CGSize(width: 640, height: 360), fps: 30, seconds: 1, barHeight: 0,
+                                withAudio: false, transform: CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: 360, ty: 0),
+                                splitColors: true)
+        let points = [(0.5, 0.1), (0.5, 0.9)]
+        let expected = try await isRedAt(src, points)
+        expect(expected[0] != expected[1], "oracle: top/bottom differ \(expected)")
+        let out = try await AerialEncoder(cacheDir: work.appendingPathComponent("rc")).encode(source: src)
+        expect(try await naturalSize(out) == CGSize(width: 360, height: 640), "display size")
+        let got = try await isRedAt(out, points)
+        expect(got == expected, "orientation kept: expected \(expected) got \(got)")
+    }
+
+    // I2: 호출자가 취소되면 (다른 대기자가 없을 때) 변환도 멈춰야 한다
+    await test("testCancelStopsEncode") {
+        let src = work.appendingPathComponent("long.mov")
+        try await makeTestVideo(url: src, size: CGSize(width: 1280, height: 720), fps: 30, seconds: 6, barHeight: 0, withAudio: false)
+        let cache = work.appendingPathComponent("cc")
+        let enc = AerialEncoder(cacheDir: cache)
+        let t = Task { try await enc.encode(source: src) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        t.cancel()
+        var threw = false
+        do { _ = try await t.value } catch { threw = true }
+        expect(threw, "cancelled encode throws")
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let movs = (try? FileManager.default.contentsOfDirectory(atPath: cache.path))?.filter { $0.hasSuffix(".mov") } ?? []
+        expect(movs.isEmpty, "no cache file after cancel, got \(movs)")
+    }
+
+    // I2: 같은 원본을 기다리는 다른 호출자가 있으면 한쪽 취소로 변환이 멈추면 안 된다
+    await test("testJoinedWaiterSurvivesOtherCancel") {
+        let src = work.appendingPathComponent("long.mov")
+        let enc = AerialEncoder(cacheDir: work.appendingPathComponent("cj"))
+        let t1 = Task { try await enc.encode(source: src) }
+        let t2 = Task { try await enc.encode(source: src) }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        t1.cancel()
+        let url = try await t2.value
+        expect(FileManager.default.fileExists(atPath: url.path), "survivor gets file")
+    }
+}

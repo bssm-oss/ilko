@@ -2,7 +2,8 @@ import AVFoundation
 import CoreImage
 
 /// 단색 프레임 + 위아래 검은 띠 테스트 영상 생성 (H.264, 선택적 무음 오디오)
-func makeTestVideo(url: URL, size: CGSize, fps: Int32, seconds: Double, barHeight: Int, withAudio: Bool) async throws {
+func makeTestVideo(url: URL, size: CGSize, fps: Int32, seconds: Double, barHeight: Int, withAudio: Bool,
+                   transform: CGAffineTransform = .identity, splitColors: Bool = false) async throws {
     try? FileManager.default.removeItem(at: url)
     let w = Int(size.width), h = Int(size.height)
     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -13,6 +14,7 @@ func makeTestVideo(url: URL, size: CGSize, fps: Int32, seconds: Double, barHeigh
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
         kCVPixelBufferWidthKey as String: w, kCVPixelBufferHeightKey as String: h,
     ])
+    vin.transform = transform
     writer.add(vin)
     var ain: AVAssetWriterInput?
     if withAudio {
@@ -56,7 +58,13 @@ func makeTestVideo(url: URL, size: CGSize, fps: Int32, seconds: Double, barHeigh
             let dark = y < barHeight || y >= h - barHeight
             for x in 0..<w {
                 let p = base + y * bpr + x * 4
-                p[0] = dark ? 0 : 60; p[1] = dark ? 0 : 160; p[2] = dark ? 0 : 220; p[3] = 255
+                if splitColors {
+                    // 버퍼 왼쪽 절반 빨강, 오른쪽 절반 파랑 (BGRA)
+                    let red = x < w / 2
+                    p[0] = red ? 0 : 230; p[1] = 0; p[2] = red ? 230 : 0; p[3] = 255
+                } else {
+                    p[0] = dark ? 0 : 60; p[1] = dark ? 0 : 160; p[2] = dark ? 0 : 220; p[3] = 255
+                }
             }
         }
         CVPixelBufferUnlockBaseAddress(pb!, [])
@@ -132,4 +140,22 @@ func blackBarRows(_ url: URL) async throws -> (top: Int, bottom: Int) {
     var top = 0; while top < h / 2 && dark(top) { top += 1 }
     var bot = 0; while bot < h / 2 && dark(h - 1 - bot) { bot += 1 }
     return (top, bot)
+}
+
+/// 표시 방향(preferredTransform 적용) 기준으로 정규화 좌표의 픽셀이 빨강 우세인지
+func isRedAt(_ url: URL, _ points: [(Double, Double)]) async throws -> [Bool] {
+    let asset = AVURLAsset(url: url)
+    let g = AVAssetImageGenerator(asset: asset)
+    g.appliesPreferredTrackTransform = true
+    let (img, _) = try await g.image(at: CMTime(seconds: 0.2, preferredTimescale: 600))
+    let w = img.width, h = img.height
+    let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
+    let p = ctx.data!.assumingMemoryBound(to: UInt8.self)
+    return points.map { (nx, ny) in
+        let x = min(w - 1, Int(nx * Double(w))), y = min(h - 1, Int(ny * Double(h)))  // y: 위에서부터
+        let i = (y * w + x) * 4
+        return p[i] > p[i + 2]
+    }
 }

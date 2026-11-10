@@ -67,7 +67,7 @@ dmg: release
 ## 잠금화면(Aerial) 코어 테스트 — Xcode 없이 swiftc 로 빌드·실행
 SWIFT_SDK      = $(shell xcrun --show-sdk-path)
 SWIFT_FLAGS    = -sdk $(SWIFT_SDK) -target arm64-apple-macos26.1 -swift-version 6 -default-isolation MainActor
-LOCKSCREEN_SRC = LockScreen/AerialCatalog.swift LockScreen/AerialEncoder.swift LockScreen/LockScreenSlot.swift
+LOCKSCREEN_SRC = LockScreen/AerialCatalog.swift LockScreen/AerialEncoder.swift LockScreen/LockScreenSlot.swift LockScreen/LockScreenCoordinator.swift
 TEST_BIN       = build/lockscreen-tests/runner
 
 test-lockscreen:
