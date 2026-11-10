@@ -328,9 +328,8 @@
 
   self.screen_locked = true;
 
-  for (AVQueuePlayer *player in _players) {
-    [player pause];
-  }
+  // playbackPaused 플래그까지 세워야 해제 시 resumeAllPlayers 가 실제로 재개한다
+  [self pauseAllPlayers];
 }
 
 - (void)screenUnlocked:(NSNotification *)note {
