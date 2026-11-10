@@ -4,6 +4,7 @@ import SwiftUI
 // MARK: - Settings View
 struct SettingsView: View {
     @ObservedObject var viewModel: WallpaperViewModel
+    @EnvironmentObject var lockScreen: LockScreenCoordinator
     @Environment(\.dismiss) private var dismiss
     @State private var showFolderPicker = false
     @AppStorage(UserDefaultsKeys.scaleMode) var scaleMode: Int = 0
@@ -108,6 +109,11 @@ struct SettingsView: View {
 
                     Divider()
 
+                    // Lock Screen (Aerial slot)
+                    LockScreenSettingsSection()
+
+                    Divider()
+
                     // Optimize Videos
                     SettingRow(title: L.optimizeCodecs) {
                         Button(L.optimize) {
@@ -126,6 +132,8 @@ struct SettingsView: View {
                     // Reset User Data
                     SettingRow(title: L.resetUserData) {
                         Button(L.reset) {
+                            // 설정이 지워지기 전에 잠금화면 기능을 꺼서 시스템 배경을 원래대로 되돌린다
+                            lockScreen.setEnabled(false)
                             viewModel.resetUserData()
                         }
                     }
@@ -166,6 +174,87 @@ struct SettingsView: View {
     private func openInFinder() {
         if let url = URL(string: "file://\(viewModel.folderPath)") {
             NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Lock Screen Section
+/// 잠금화면 영상: 토글 + 덮어쓸 Aerial 슬롯 선택
+struct LockScreenSettingsSection: View {
+    @EnvironmentObject var lockScreen: LockScreenCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SettingRow(title: L.lockScreenVideo) {
+                Toggle("", isOn: Binding(get: { lockScreen.isEnabled }, set: { lockScreen.setEnabled($0) }))
+                    .toggleStyle(.switch)
+                    .disabled(!lockScreen.isSupported)
+                if lockScreen.isEncoding {
+                    ProgressView().controlSize(.small)
+                    Text(L.lockScreenEncoding).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if !lockScreen.isSupported {
+                Text(L.lockScreenUnsupported).font(.caption).foregroundStyle(.secondary)
+            }
+            if lockScreen.notice == .systemWallpaperChanged {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                    Text(L.lockScreenDisabledNotice).font(.caption)
+                    Spacer()
+                    Button { lockScreen.notice = nil } label: { Image(systemName: "xmark") }
+                        .buttonStyle(.plain)
+                }
+                .padding(8)
+                .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            }
+            if lockScreen.isEnabled {
+                SettingRow(title: L.lockScreenSaver) {
+                    Toggle("", isOn: Binding(get: { lockScreen.screenSaverEnabled },
+                                             set: { lockScreen.setScreenSaverEnabled($0) }))
+                        .toggleStyle(.switch)
+                }
+            }
+            if lockScreen.isEnabled, let catalog = lockScreen.catalog {
+                Text(L.lockScreenSlot).font(.subheadline).fontWeight(.semibold)
+                Text(L.lockScreenSlotHint).font(.caption).foregroundStyle(.secondary)
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 10)], spacing: 10) {
+                        let excluded = lockScreen.excludedAssetID
+                        ForEach(catalog.assets) { asset in
+                            AerialSlotCell(asset: asset, selected: asset.id == lockScreen.selectedAssetID)
+                                // 사용자의 원래 Aerial 은 덮어쓸 수 없다
+                                .opacity(asset.id == excluded ? 0.35 : 1)
+                                .onTapGesture { lockScreen.selectSlot(asset.id) }
+                        }
+                    }
+                }
+                .frame(height: 220)
+            }
+        }
+    }
+}
+
+private struct AerialSlotCell: View {
+    let asset: AerialAsset
+    let selected: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Group {
+                if let url = asset.thumbnailURL, let img = NSImage(contentsOf: url) {
+                    Image(nsImage: img).resizable().aspectRatio(16 / 9, contentMode: .fill)
+                } else {
+                    Rectangle().fill(.quaternary)
+                }
+            }
+            .frame(width: 120, height: 68)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(selected ? Color.accentColor : .clear, lineWidth: 3)
+            )
+            Text(asset.name).font(.caption2).lineLimit(1).frame(width: 120)
         }
     }
 }

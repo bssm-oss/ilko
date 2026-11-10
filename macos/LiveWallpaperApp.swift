@@ -40,6 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // ilko 핵심 컨트롤러
     let profileManager = ProfileManager()
     let locationWatcher = LocationWatcher()
+    let lockScreen = LockScreenCoordinator()
     private var switchController: SwitchController!
     private var menuBarController: MenuBarController!
 
@@ -55,7 +56,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switchController = SwitchController(
             profileManager: profileManager,
             locationWatcher: locationWatcher,
-            engine: engine
+            engine: engine,
+            lockScreen: lockScreen
         )
         menuBarController = MenuBarController(
             profileManager: profileManager,
@@ -88,6 +90,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 .environmentObject(profileManager)
                 .environmentObject(locationWatcher)
                 .environmentObject(switchController)
+                .environmentObject(lockScreen)
         )
         window.title = "ILKO"
         window.isReleasedWhenClosed = false

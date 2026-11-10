@@ -74,6 +74,14 @@ enum L {
     static let rotationType = "전환 방식"
     static let vinttageBar = "비네트 바 (변경 후 월페이퍼 재적용)"
     static let rotationDelay = "전환 간격"
+    static let lockScreenSection = "잠금화면"
+    static let lockScreenVideo = "잠금화면에도 영상 적용"
+    static let lockScreenSaver = "화면 보호기에도 영상 적용"
+    static let lockScreenSlot = "덮어쓸 Aerial 배경"
+    static let lockScreenSlotHint = "선택한 Aerial은 시스템 설정에서 원래 영상 대신 ILKO 영상으로 재생됩니다."
+    static let lockScreenEncoding = "잠금화면용 영상 변환 중…"
+    static let lockScreenUnsupported = "이 macOS 버전은 지원하지 않습니다"
+    static let lockScreenDisabledNotice = "시스템 배경이 변경되어 잠금화면 영상을 껐습니다"
 }
 
 // MARK: - UserDefaults Keys

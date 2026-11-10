@@ -82,6 +82,7 @@ struct ProfileRowView: View {
 
 // MARK: - Profile Editor Sheet
 struct ProfileEditorView: View {
+    @EnvironmentObject var lockScreen: LockScreenCoordinator
     @State var profile: Profile
     let isDefaultProfile: Bool
     let existingProfiles: [Profile]
@@ -90,6 +91,8 @@ struct ProfileEditorView: View {
     let onCancel: () -> Void
 
     @State private var thumbnailImage: NSImage?
+    /// 저장 시 잠금화면용 변환 작업 (진행 중이면 변환 창 표시)
+    @State private var conversion: Task<Void, Never>?
 
     private var isDuplicateName: Bool {
         existingProfiles.contains { $0.id != profile.id && $0.name == profile.name }
@@ -177,15 +180,50 @@ struct ProfileEditorView: View {
             HStack {
                 Spacer()
                 Button("취소", action: onCancel)
-                Button("저장") { onSave(profile) }
+                Button("저장") { save() }
                 .buttonStyle(.borderedProminent)
-                .disabled(profile.name.isEmpty || profile.wallpaperPath.isEmpty || isDuplicateName)
+                .disabled(profile.name.isEmpty || profile.wallpaperPath.isEmpty || isDuplicateName || conversion != nil)
             }
         }
         .padding(24)
         .frame(width: 460)
+        .overlay {
+            // 리눅스 버전처럼: 저장 시 변환이 끝날 때까지 기다리게 하는 변환 창
+            if conversion != nil {
+                ZStack {
+                    Color.black.opacity(0.35)
+                    VStack(spacing: 12) {
+                        Text(L.lockScreenEncoding).font(.headline)
+                        Text(URL(fileURLWithPath: profile.wallpaperPath).lastPathComponent)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle)
+                        let p = lockScreen.progress[profile.wallpaperPath] ?? 0
+                        ProgressView(value: p).frame(width: 240)
+                        Text("\(Int(p * 100))%").font(.caption).monospacedDigit()
+                        Button("취소") { conversion?.cancel() }
+                    }
+                    .padding(24)
+                    .frame(width: 320)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
         .task(id: profile.wallpaperPath) {
             thumbnailImage = await loadThumbnail(path: profile.wallpaperPath)
+        }
+    }
+
+    /// 잠금화면 기능이 켜져 있고 영상이면 변환이 끝난 뒤 저장한다. 취소하면 편집 창에 남는다.
+    private func save() {
+        let path = profile.wallpaperPath
+        guard lockScreen.isEnabled, !CloudFile.needsMaterialization(URL(fileURLWithPath: path)) else {
+            onSave(profile)
+            return
+        }
+        conversion = Task { @MainActor in
+            let ok = await lockScreen.convertForProfile(path: path)
+            conversion = nil
+            if ok { onSave(profile) }
         }
     }
 

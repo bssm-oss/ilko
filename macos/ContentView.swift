@@ -28,6 +28,7 @@ struct ContentView: View {
     @EnvironmentObject var locationWatcher: LocationWatcher
     @EnvironmentObject var switchController: SwitchController
     @EnvironmentObject var profileManager: ProfileManager
+    @EnvironmentObject var lockScreen: LockScreenCoordinator
 
     @Environment(\.dismiss) private var dismiss
     static var didCloseOnLaunch = false
@@ -51,6 +52,7 @@ struct ContentView: View {
                         videos: viewModel.videos, viewModel: viewModel,
                         onVideoSelect: { video in
                             viewModel.startWallpaper(video: video)
+                            lockScreen.videoApplied(path: video.path)  // 그리드 선택도 잠금화면에 반영
                         }
                     )
                     .padding(.horizontal, 24).padding(.bottom, 24)
@@ -175,6 +177,7 @@ struct ToolbarView: View {
 
 #Preview {
     SettingsView(viewModel: WallpaperViewModel())
+        .environmentObject(LockScreenCoordinator())
         .environmentObject(ProfileManager())
         .environmentObject(LocationWatcher())
 }
