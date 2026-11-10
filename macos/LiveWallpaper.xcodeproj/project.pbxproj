@@ -57,6 +57,10 @@
 		04F816E02EEBE3FB00CFB473 /* DisplayObjc.mm in Sources */ = {isa = PBXBuildFile; fileRef = 04F816DF2EEBE3FB00CFB473 /* DisplayObjc.mm */; };
 		B1000002FFFF00000000BB02 /* LocationWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001FFFF00000000BB01 /* LocationWatcher.swift */; };
 		B1000004FFFF00000000BB04 /* ProfileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000003FFFF00000000BB03 /* ProfileManager.swift */; };
+		B1000052FFFF000000004C10 /* AerialCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000051FFFF000000004C00 /* AerialCatalog.swift */; };
+		B1000054FFFF000000004C11 /* AerialEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000053FFFF000000004C01 /* AerialEncoder.swift */; };
+		B1000056FFFF000000004C12 /* LockScreenSlot.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000055FFFF000000004C02 /* LockScreenSlot.swift */; };
+		B1000058FFFF000000004C13 /* LockScreenCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000057FFFF000000004C03 /* LockScreenCoordinator.swift */; };
 		B1000006FFFF00000000BB06 /* SwitchController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000005FFFF00000000BB05 /* SwitchController.swift */; };
 		B1000008FFFF00000000BB08 /* MenuBarController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000007FFFF00000000BB07 /* MenuBarController.swift */; };
 		B100000AFFFF00000000BB0A /* CoreWLAN.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B1000009FFFF00000000BB09 /* CoreWLAN.framework */; };
@@ -284,6 +288,10 @@
 		04F816DF2EEBE3FB00CFB473 /* DisplayObjc.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = DisplayObjc.mm; sourceTree = SOURCE_ROOT; };
 		B1000001FFFF00000000BB01 /* LocationWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationWatcher.swift; sourceTree = SOURCE_ROOT; };
 		B1000003FFFF00000000BB03 /* ProfileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManager.swift; sourceTree = SOURCE_ROOT; };
+		B1000051FFFF000000004C00 /* AerialCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreen/AerialCatalog.swift; sourceTree = SOURCE_ROOT; };
+		B1000053FFFF000000004C01 /* AerialEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreen/AerialEncoder.swift; sourceTree = SOURCE_ROOT; };
+		B1000055FFFF000000004C02 /* LockScreenSlot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreen/LockScreenSlot.swift; sourceTree = SOURCE_ROOT; };
+		B1000057FFFF000000004C03 /* LockScreenCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreen/LockScreenCoordinator.swift; sourceTree = SOURCE_ROOT; };
 		B1000005FFFF00000000BB05 /* SwitchController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwitchController.swift; sourceTree = SOURCE_ROOT; };
 		B1000007FFFF00000000BB07 /* MenuBarController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarController.swift; sourceTree = SOURCE_ROOT; };
 		B1000009FFFF00000000BB09 /* CoreWLAN.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreWLAN.framework; path = System/Library/Frameworks/CoreWLAN.framework; sourceTree = SDKROOT; };
@@ -380,6 +388,10 @@
 				B1000001FFFF00000000BB01 /* LocationWatcher.swift */,
 				B1000003FFFF00000000BB03 /* ProfileManager.swift */,
 				B1000005FFFF00000000BB05 /* SwitchController.swift */,
+				B1000051FFFF000000004C00 /* AerialCatalog.swift */,
+				B1000053FFFF000000004C01 /* AerialEncoder.swift */,
+				B1000055FFFF000000004C02 /* LockScreenSlot.swift */,
+				B1000057FFFF000000004C03 /* LockScreenCoordinator.swift */,
 				B1000007FFFF00000000BB07 /* MenuBarController.swift */,
 				B100000BFFFF00000000BB0B /* VisualEffectView.swift */,
 				B100000DFFFF00000000BB0D /* LanguageManager.swift */,
@@ -790,6 +802,10 @@
 				B1000002FFFF00000000BB02 /* LocationWatcher.swift in Sources */,
 				B1000004FFFF00000000BB04 /* ProfileManager.swift in Sources */,
 				B1000006FFFF00000000BB06 /* SwitchController.swift in Sources */,
+				B1000052FFFF000000004C10 /* AerialCatalog.swift in Sources */,
+				B1000054FFFF000000004C11 /* AerialEncoder.swift in Sources */,
+				B1000056FFFF000000004C12 /* LockScreenSlot.swift in Sources */,
+				B1000058FFFF000000004C13 /* LockScreenCoordinator.swift in Sources */,
 				B1000008FFFF00000000BB08 /* MenuBarController.swift in Sources */,
 				B100000CFFFF00000000BB0C /* VisualEffectView.swift in Sources */,
 				B100000EFFFF00000000BB0E /* LanguageManager.swift in Sources */,

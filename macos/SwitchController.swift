@@ -9,10 +9,13 @@ class SwitchController: ObservableObject {
     private let profileManager: ProfileManager
     private let locationWatcher: LocationWatcher
     private let engine: WallpaperEngine
+    private let lockScreen: LockScreenCoordinator
     private var cancellable: AnyCancellable?
 
-    init(profileManager: ProfileManager, locationWatcher: LocationWatcher, engine: WallpaperEngine) {
+    init(profileManager: ProfileManager, locationWatcher: LocationWatcher, engine: WallpaperEngine,
+         lockScreen: LockScreenCoordinator) {
         self.profileManager = profileManager
+        self.lockScreen = lockScreen
         self.locationWatcher = locationWatcher
         self.engine = engine
 
@@ -81,6 +84,7 @@ class SwitchController: ObservableObject {
             $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         }
         engine.startWallpaper(withPath: path, onDisplays: displayIDs)
+        lockScreen.videoApplied(path: path)  // 잠금화면(Aerial 슬롯) — 켜져 있을 때만 동작
     }
 
     /// jpg/png: NSWorkspace로 정적 배경 설정, 기존 라이브 데몬 종료
@@ -90,5 +94,6 @@ class SwitchController: ObservableObject {
             try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
         }
         engine.killAllDaemons()
+        lockScreen.imageApplied()
     }
 }

@@ -79,7 +79,7 @@ test-lockscreen:
 typecheck:
 	swiftc -typecheck $(SWIFT_FLAGS) -cxx-interoperability-mode=default \
 		-import-objc-header LiveWallpaper-Bridging-Header.h -I . *.swift LockScreen/*.swift 2>&1 \
-		| grep -E "error:" | grep -v "SwiftUIMacros\|VideoGridView.swift" ; \
+		| grep -E "^[^ |].*\.(swift|h):[0-9]+:[0-9]+: error:" | grep -v "^VideoGridView.swift" ; \
 		test $$? -eq 1 && echo "typecheck OK (baseline VideoGridView macro errors ignored)"
 
 ## 빌드 결과물 삭제

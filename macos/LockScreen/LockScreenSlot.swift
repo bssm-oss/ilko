@@ -93,7 +93,7 @@ nonisolated struct LockScreenSlot: Sendable {
         var index = try readIndex()
         if let id = currentAssetID(index) { try removeSlotFile(assetID: id) }
         if let data = try? Data(contentsOf: backupURL),
-            let backup = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            let backup = try PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any] {
             for key in Self.indexKeys {
                 if let list = backup[key] as? [Any] { try setChoices(&index, key, list) }
             }
@@ -129,7 +129,7 @@ nonisolated struct LockScreenSlot: Sendable {
         guard let c = (try? choices(index, "AllSpacesAndDisplays"))?.first as? [String: Any],
             c["Provider"] as? String == Self.aerialsProvider,
             let data = c["Configuration"] as? Data,
-            let cfg = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+            let cfg = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any]
         else { return nil }
         return cfg["assetID"] as? String
     }
@@ -155,7 +155,7 @@ nonisolated struct LockScreenSlot: Sendable {
         guard let data = try? Data(contentsOf: indexURL) else {
             throw LockScreenError.unsupportedFormat("Index.plist unreadable")
         }
-        guard let index = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        guard let index = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any]
         else { throw LockScreenError.unsupportedFormat("Index.plist is not a dictionary") }
         return index
     }

@@ -6,7 +6,7 @@ final class CountingProcesses: WallpaperProcessControlling, @unchecked Sendable 
 }
 
 private func readIndex(_ url: URL) throws -> [String: Any] {
-    try PropertyListSerialization.propertyList(from: Data(contentsOf: url), format: nil) as! [String: Any]
+    try PropertyListSerialization.propertyList(from: Data(contentsOf: url), options: .init(), format: nil) as! [String: Any]
 }
 
 private func choice0(_ index: [String: Any], _ key: String) -> [String: Any] {
@@ -16,7 +16,7 @@ private func choice0(_ index: [String: Any], _ key: String) -> [String: Any] {
 
 private func assetID(of choice: [String: Any]) -> String? {
     guard let data = choice["Configuration"] as? Data,
-        let cfg = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        let cfg = try? PropertyListSerialization.propertyList(from: data, options: .init(), format: nil) as? [String: Any]
     else { return nil }
     return cfg["assetID"] as? String
 }
